@@ -1,0 +1,2 @@
+# LanguageSwitcher
+app for MacOS

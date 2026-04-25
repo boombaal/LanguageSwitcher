@@ -30,6 +30,12 @@ final class EventTapController: NSObject {
     private var didLogFirstKey = false
     private var pendingAmbiguous: [PendingAmbiguousWord] = []
     private let maxPendingAmbiguous = 32
+    /// Сколько полных границ слов прошло **после** того, как в `pending` попало ambi-слово (лог, опцион.)
+    private var wordBoundariesAfterAmbiPending: Int = 0
+    /// Слова между ambi-сегмент(ами) и **текущим** (разрешающим) словом, пока нет `languageHint` / до deferred.
+    /// Иначе при «рун»+пробел+`hey`+проб+`how`+… срабатывал `stale_pending_dropped` — «рун» оставался, дальше путалась вставка («рунhey»).
+    private var deferredInterstitialWords: [PendingAmbiguousWord] = []
+    private let maxDeferredInterstitialWords = 40
     private var ignoreTapKeyDownForOurSynthetic = false
     private let ignoreTapLock = NSLock()
     private var layoutUndoStack: [String] = []
@@ -41,9 +47,8 @@ final class EventTapController: NSObject {
     private var lastWordSnapshot: (strokes: [(UInt16, Bool)], capsLock: Bool)?
     /// macOS шлёт Control чаще через `flagsChanged`, а не `keyDown`.
     private var controlModifierWasDown = false
-    /// Streaming plausibility для пошаговой смены раскладки (сравнение с прошлым нажатием).
-    private var lastIncrementalPlaus: (cur: Double, bestAlt: Double, curId: String)?
-    private var lastIncrementalStrokeCount: Int = 0
+    /// После пошаговой смены TIS — гистерезис (см. `incrementalLayoutCooldown`).
+    private var lastIncrementalLayoutSwitch: CFTimeInterval = 0
     private var lastKeyDownTime: CFTimeInterval = 0
 
     init(lex: LexiconStore, onTrace: @escaping (DecisionTrace) -> Void) {
@@ -108,9 +113,20 @@ final class EventTapController: NSObject {
         var displayed: String
         /// Other reading for the same keys (`asAlternateScript`), e.g. «hey» when screen shows «рун».
         var alternateScript: String
+        /// Нажатия в этом «слове»; для `backspaceN` надёжнее, чем `displayed` (нет двойного учёта с текущим буфером).
+        var keyStrokes: [(UInt16, Bool)]
     }
 
-    private func clearPending() { pendingAmbiguous.removeAll() }
+    private static func deferredKeyCount(_ p: PendingAmbiguousWord) -> Int {
+        if !p.keyStrokes.isEmpty { return p.keyStrokes.count }
+        return p.displayed.count
+    }
+
+    private func clearPending() {
+        pendingAmbiguous.removeAll()
+        wordBoundariesAfterAmbiPending = 0
+        deferredInterstitialWords.removeAll(keepingCapacity: false)
+    }
 
     private func pushLayoutUndo(before previousId: String) {
         guard !previousId.isEmpty else { return }
@@ -214,86 +230,122 @@ final class EventTapController: NSObject {
         return latId
     }
 
-    private func tryIncrementalLayoutSwitchAfterKeystroke(capsLock: Bool, meta: PlausibilityKeyMeta? = nil) {
+    /// «По буквам»: RU- и EN-чтения одних клавиш, накопленные prefix+ngram+контекст, без late fuzzy; префикс = проекция в другой скрипт.
+    private func tryIncrementalLayoutSwitchAfterKeystroke(capsLock: Bool) {
         guard AppSettings.shared.incrementalLayoutSwitchEnabled else { return }
         let minLen = AppSettings.shared.incrementalPrefixMinLength
         guard !buffer.isEmpty else { return }
-        let strokeN = buffer.keyStrokes.count
-        if strokeN < lastIncrementalStrokeCount { lastIncrementalPlaus = nil }
-        lastIncrementalStrokeCount = strokeN
-
         registry.syncCurrentInputSourceFromSystem()
         let curId = registry.currentInputSourceID
-        let readings = buildReadings(capsLock: capsLock)
         let srcs = registry.enabledSources
-        guard srcs.count >= 2 else { return }
+        guard srcs.count >= 2,
+              let ruEntry = srcs.first(where: { registry.isRussianSourceID($0.sourceID) }),
+              let latEntry = srcs.first(where: { !registry.isRussianSourceID($0.sourceID) }) else { return }
 
-        var curLang = registry.langTag(forSourceID: curId).map { EnabledKeyboardSourcesRegistry.normalizeLangTag($0) } ?? ""
-        if curLang.isEmpty {
-            curLang = registry.isRussianSourceID(curId) ? "ru" : "en"
-        }
-        let curText = readings[curId] ?? ""
-        let curP = WordPlausibility.streaming01(text: curText, lang: curLang, lex: lex, meta: meta)
-
-        var bestAltP: Double = 0
-        var bestEntry: KeyboardSourceEntry?
-        var bestText: String?
-
-        let curIsRu = registry.isRussianSourceID(curId)
-        for e in srcs where e.sourceID != curId {
-            if registry.isRussianSourceID(e.sourceID) == curIsRu {
-                continue
-            }
-            var lang = EnabledKeyboardSourcesRegistry.normalizeLangTag(e.primaryLang)
-            if lang.isEmpty {
-                lang = registry.isRussianSourceID(e.sourceID) ? "ru" : "en"
-            }
-            let text = readings[e.sourceID] ?? ""
-            guard text != curText else { continue }
-            guard text.count >= minLen else { continue }
-            let pAlt = WordPlausibility.streaming01(text: text, lang: lang, lex: lex, meta: meta)
-            if pAlt > bestAltP {
-                bestAltP = pAlt
-                bestEntry = e
-                bestText = text
-            }
+        let n = buffer.keyStrokes.count
+        let ctx = LanguageContextModel.shared
+        var accEN = 0.0
+        var accRU = 0.0
+        for len in 1...n {
+            let strokes = Array(buffer.keyStrokes.prefix(len))
+            let read = buildReadings(strokes: strokes, capsLock: capsLock)
+            let rE = read[latEntry.sourceID] ?? ""
+            let rR = read[ruEntry.sourceID] ?? ""
+            accEN += WordPlausibility.incrementalPlaus01(prefix: rE, lang: "en", lex: lex) + 0.035 * ctx.incrementalLangBias(for: "en")
+            accRU += WordPlausibility.incrementalPlaus01(prefix: rR, lang: "ru", lex: lex) + 0.035 * ctx.incrementalLangBias(for: "ru")
         }
 
-        let margin = WordPlausibility.incrementalSwitchMargin
-        if curText.count >= minLen, curP + margin >= bestAltP {
-            lastIncrementalPlaus = (curP, bestAltP, curId)
-            return
+        let readFull = buildReadings(strokes: buffer.keyStrokes, capsLock: capsLock)
+        let rENFull = readFull[latEntry.sourceID] ?? ""
+        let rRUFull = readFull[ruEntry.sourceID] ?? ""
+        let conf = 1.0 - exp(-0.2 * Double(n))
+        let now = CFAbsoluteTimeGetCurrent()
+        let cool = AppSettings.shared.incrementalLayoutCooldown
+        let curIsRU = registry.isRussianSourceID(curId)
+        if now - lastIncrementalLayoutSwitch < cool {
+            if curIsRU { accEN -= 0.1 } else { accRU -= 0.1 }
         }
 
-        var shouldSwitch = false
-        if let t = bestText, t.count >= minLen, bestAltP > curP + margin { shouldSwitch = true }
-        if !shouldSwitch, let _ = bestEntry, let last = lastIncrementalPlaus, last.curId == curId, curP < last.cur {
-            let rel = last.cur > 0.04 ? (last.cur - curP) / last.cur : 0
-            if rel >= WordPlausibility.relativeDropForSignal, bestAltP + 0.02 >= curP, (bestText?.count ?? 0) >= minLen {
-                shouldSwitch = true
-            }
+        if AppSettings.shared.incrementalScoringDebug {
+            let d = accRU - accEN
+            let th = WordPlausibility.incrementalSumDiffThreshold(keyStrokes: n)
+            var dec: String
+            if max(rENFull.count, rRUFull.count) < minLen { dec = "короткий" }
+            else if conf < AppSettings.shared.incrementalMinConfidence { dec = "low_conf" }
+            else if (curIsRU && accEN - accRU > th) || (!curIsRU && accRU - accEN > th) { dec = "switch?" }
+            else { dec = "pending" }
+            let line = "typed en:«\(rENFull)» ru:«\(rRUFull)» | accEN \(String(format: "%.2f", accEN)) accRU \(String(format: "%.2f", accRU)) Δ(ru-en) \(String(format: "%.2f", d)) th \(String(format: "%.2f", th)) conf \(String(format: "%.2f", conf)) — \(dec)"
+            LaunchLog.append("Inc: \(line)")
         }
 
-        if !shouldSwitch {
-            lastIncrementalPlaus = (curP, bestAltP, curId)
-            return
-        }
-        guard let e = bestEntry, let altStr = bestText, altStr.count >= minLen else {
-            lastIncrementalPlaus = (curP, bestAltP, curId)
-            return
-        }
+        guard max(rENFull.count, rRUFull.count) >= minLen else { return }
+        guard conf >= AppSettings.shared.incrementalMinConfidence else { return }
+        let th = WordPlausibility.incrementalSumDiffThreshold(keyStrokes: n)
+        var target: KeyboardSourceEntry?
+        if curIsRU, accEN - accRU > th { target = latEntry }
+        else if !curIsRU, accRU - accEN > th { target = ruEntry }
+        guard let e = target, e.sourceID != curId else { return }
         let live = registry.liveCurrentInputSourceID()
         guard live == curId || live == e.sourceID else { return }
         var altL = registry.langTag(forSourceID: e.sourceID).map { EnabledKeyboardSourcesRegistry.normalizeLangTag($0) } ?? ""
         if altL.isEmpty { altL = registry.isRussianSourceID(e.sourceID) ? "ru" : "en" }
-        lastIncrementalPlaus = nil
+        lastIncrementalLayoutSwitch = now
         pushLayoutUndo(before: live)
         _ = input.selectSource(id: e.sourceID)
-        LaunchLog.append("EventTap: score префикс cur=\(String(format: "%.2f", curP)) → alt=\(String(format: "%.2f", bestAltP)) «\(altStr)» (\(altL) \(e.sourceID))")
+        LaunchLog.append("EventTap: инкрем. \(curIsRU ? "RU" : "EN") → \(altL) accEN=\(String(format: "%.2f", accEN)) accRU=\(String(format: "%.2f", accRU)) th=\(String(format: "%.2f", th)) «en:\(rENFull)» / «ru:\(rRUFull)»")
     }
 
     private static func isWordPlausibleForLang(_ s: String, lang: String, lex: LexiconStore) -> Bool {
         WordPlausibility.score01(word: s, lang: lang, lex: lex) >= WordPlausibility.acceptThreshold
+    }
+
+    /// Отлож. вставка: текст текущего слова в целевом языке (те же клавиши, что `readings` на границе), а не `asCurrentScript` из трейса.
+    private static func currentWordTextForDeferred(
+        preferLang: String,
+        readings: [String: String],
+        currentId: String,
+        t: DecisionTrace,
+        sources: [KeyboardSourceEntry]
+    ) -> String {
+        let want = EnabledKeyboardSourcesRegistry.normalizeLangTag(preferLang)
+        let reg = EnabledKeyboardSourcesRegistry.shared
+        if want == "en" {
+            for e in sources where !reg.isRussianSourceID(e.sourceID) {
+                if let s = readings[e.sourceID], !s.isEmpty { return s }
+            }
+        } else if want == "ru" {
+            for e in sources where reg.isRussianSourceID(e.sourceID) {
+                if let s = readings[e.sourceID], !s.isEmpty { return s }
+            }
+        }
+        return stringForScoredCurrent(readings: readings, currentId: currentId, t: t)
+    }
+
+    /// После `hold_ru_ctx` `inferredLanguageIntent` = ru — тогда отлож. вставка даёт кир+кириллицу (рун+рщц) вместо en-фразы. Override → en, если и ambi-сегм., и текущее en-чтение уверенны.
+    private static func deferredEnOverrideWhenHoldRuCtx(
+        pending: [PendingAmbiguousWord],
+        readings: [String: String],
+        t: DecisionTrace,
+        sources: [KeyboardSourceEntry],
+        lex: LexiconStore
+    ) -> String? {
+        let reg = EnabledKeyboardSourcesRegistry.shared
+        guard t.reasonCode == "hold_ru_ctx", !pending.isEmpty else { return nil }
+        var enCurrent = t.asAlternateScript
+        for e in sources where !reg.isRussianSourceID(e.sourceID) {
+            if let s = readings[e.sourceID], !s.isEmpty { enCurrent = s; break }
+        }
+        let enC = enCurrent.lowercased()
+        guard !enC.isEmpty,
+              enC.rangeOfCharacter(from: .letters) != nil,
+              isWordPlausibleForLang(enC, lang: "en", lex: lex) else { return nil }
+        for p in pending {
+            let alt = p.alternateScript
+            if alt.isEmpty { continue }
+            if alt.range(of: #"^[A-Za-z\-']{2,}$"#, options: .regularExpression) == nil { continue }
+            if isWordPlausibleForLang(alt.lowercased(), lang: "en", lex: lex) { return "en" }
+        }
+        return nil
     }
 
     /// Reading of the same keystrokes in `preferLang`, for deferred replacement — never fall back to on-screen Cyrillic when we asked for English.
@@ -338,6 +390,42 @@ final class EventTapController: NSObject {
         let x = a.lowercased().replacingOccurrences(of: "ё", with: "е")
         let y = b.lowercased().replacingOccurrences(of: "ё", with: "е")
         return x == y
+    }
+
+    /// «hey how» и т.п. — вся строка A–Z, без смешения: один select + type, без лишних TIS/пробел между сегм.
+    private static func isLatinLetterOrSpaceOnly(_ s: String) -> Bool {
+        guard !s.isEmpty else { return false }
+        return s.range(of: #"^[A-Za-z ]+$"#, options: .regularExpression) != nil
+    }
+
+    /// Отлож. вставка: если в `enabledSources` только RU, `TIS` для Latin через реестр не выбрать — берём U.S. из `TISCreateASCIICapableInputSourceList` + `usID` для `SyntheticKeyboard.type`.
+    private static func typeDeferredLatinWithResolvedUS(
+        _ allText: String,
+        input: InputSourceManager
+    ) {
+        let r = input.resolve()
+        let st = input.selectUS()
+        if st != 0 {
+            LaunchLog.append("EventTap: deferred selectUS status=\(st) usID=\(r.usID) usFound=\(r.usFound)")
+        }
+        Thread.sleep(forTimeInterval: 0.012)
+        SyntheticKeyboard.type(allText, layoutSourceID: r.usID)
+        LaunchLog.append("EventTap: deferred (US resolve) type «\(allText)» usID=\(r.usID)")
+    }
+
+    /// Симметрично `typeDeferredLatinWithResolvedUS`: в short list нет RU, `TIS` для кириллицы берём из `TISCreateASCIICapableList` + `ruID`.
+    private static func typeDeferredCyrillicResolvingRU(
+        _ allText: String,
+        input: InputSourceManager
+    ) {
+        let r = input.resolve()
+        let st = input.selectRussian()
+        if st != 0 {
+            LaunchLog.append("EventTap: deferred selectRussian status=\(st) ruID=\(r.ruID) ruFound=\(r.ruFound)")
+        }
+        Thread.sleep(forTimeInterval: 0.012)
+        SyntheticKeyboard.type(allText, layoutSourceID: r.ruID)
+        LaunchLog.append("EventTap: deferred (RU resolve) type «\(allText)» ruID=\(r.ruID)")
     }
 
     private static func stringForScoredCurrent(readings: [String: String], currentId: String, t: DecisionTrace) -> String {
@@ -399,11 +487,12 @@ final class EventTapController: NSObject {
             LaunchLog.append("EventTap: first keyDown (HID доходит) keycode=\(kc) autoSwitch=\(AppSettings.shared.isAutoSwitchEnabled)")
         }
         if !AppSettings.shared.isAutoSwitchEnabled { return Unmanaged.passUnretained(e) }
+        // Только HID autorepeat (удержание клавиши). Не использовать NSEvent.isARepeat: иначе второе
+        // отдельное нажатие той же клавиши (напр. ...инг|g| + |g|hbdtn=привет) может не попасть в буфер.
+        if e.isKeyAutorepeat { return Unmanaged.passUnretained(e) }
         if let n = NSEvent(cgEvent: e) {
-            if n.isARepeat { return Unmanaged.passUnretained(e) }
             return onKeyDown(n: n, cg: e)
         }
-        if e.isKeyAutorepeat { return Unmanaged.passUnretained(e) }
         return onKeyDown(cg: e)
     }
 
@@ -415,8 +504,8 @@ final class EventTapController: NSObject {
             buffer.popLast()
             lastKeyDownTime = CFAbsoluteTimeGetCurrent()
             if !buffer.isEmpty {
-                tryIncrementalLayoutSwitchAfterKeystroke(capsLock: n.modifierFlags.contains(.capsLock), meta: PlausibilityKeyMeta(isBackspace: true))
-            } else { lastIncrementalPlaus = nil; lastIncrementalStrokeCount = 0 }
+                tryIncrementalLayoutSwitchAfterKeystroke(capsLock: n.modifierFlags.contains(.capsLock))
+            }
             return Unmanaged.passUnretained(cg)
         }
         if kc == kEscape { buffer.clear(); clearPending(); lastKeyDownTime = 0; return Unmanaged.passUnretained(cg) }
@@ -427,7 +516,7 @@ final class EventTapController: NSObject {
             if !buffer.isEmpty, lastKeyDownTime > 0 { LanguageContextModel.shared.registerInterKeyGap(now - lastKeyDownTime) }
             lastKeyDownTime = now
             buffer.append(key: kc, shift: n.modifierFlags.contains(.shift))
-            tryIncrementalLayoutSwitchAfterKeystroke(capsLock: n.modifierFlags.contains(.capsLock), meta: nil)
+            tryIncrementalLayoutSwitchAfterKeystroke(capsLock: n.modifierFlags.contains(.capsLock))
             return Unmanaged.passUnretained(cg)
         }
         buffer.clear(); clearPending(); lastKeyDownTime = 0
@@ -443,8 +532,8 @@ final class EventTapController: NSObject {
             buffer.popLast()
             lastKeyDownTime = CFAbsoluteTimeGetCurrent()
             if !buffer.isEmpty {
-                tryIncrementalLayoutSwitchAfterKeystroke(capsLock: f.contains(.capsLock), meta: PlausibilityKeyMeta(isBackspace: true))
-            } else { lastIncrementalPlaus = nil; lastIncrementalStrokeCount = 0 }
+                tryIncrementalLayoutSwitchAfterKeystroke(capsLock: f.contains(.capsLock))
+            }
             return Unmanaged.passUnretained(cg)
         }
         if kc == kEscape { buffer.clear(); clearPending(); lastKeyDownTime = 0; return Unmanaged.passUnretained(cg) }
@@ -455,7 +544,7 @@ final class EventTapController: NSObject {
             if !buffer.isEmpty, lastKeyDownTime > 0 { LanguageContextModel.shared.registerInterKeyGap(now - lastKeyDownTime) }
             lastKeyDownTime = now
             buffer.append(key: kc, shift: f.contains(.shift))
-            tryIncrementalLayoutSwitchAfterKeystroke(capsLock: f.contains(.capsLock), meta: nil)
+            tryIncrementalLayoutSwitchAfterKeystroke(capsLock: f.contains(.capsLock))
             return Unmanaged.passUnretained(cg)
         }
         buffer.clear(); clearPending(); lastKeyDownTime = 0
@@ -463,7 +552,10 @@ final class EventTapController: NSObject {
     }
 
     private func buildReadings(capsLock: Bool) -> [String: String] {
-        let strokes = buffer.keyStrokes
+        buildReadings(strokes: buffer.keyStrokes, capsLock: capsLock)
+    }
+
+    private func buildReadings(strokes: [(UInt16, Bool)], capsLock: Bool) -> [String: String] {
         var m: [String: String] = [:]
         for e in registry.enabledSources {
             m[e.sourceID] = translator.string(from: strokes, sourceID: e.sourceID, capsLock: capsLock)
@@ -476,6 +568,9 @@ final class EventTapController: NSObject {
         let caps = n?.modifierFlags.contains(.capsLock) ?? cg.nsModifierFlags.contains(.capsLock)
         let readings = buildReadings(capsLock: caps)
         let curId = registry.currentInputSourceID
+        if !pendingAmbiguous.isEmpty {
+            wordBoundariesAfterAmbiPending += 1
+        }
         let wus = buffer.stringAsUS()
         let wru = buffer.stringAsRU()
         let tisRU = input.isCurrentlyRussian()
@@ -486,7 +581,6 @@ final class EventTapController: NSObject {
         buffer.clear()
         lastKeyDownTime = 0
         let minL = AppSettings.shared.minWordLength
-        let disp = Self.displayCurrentWord(readings: readings, currentId: curId)
         if !hasAnyReading, wus.isEmpty, wru.isEmpty {
             clearPending()
             let d = DecisionTrace(
@@ -499,15 +593,32 @@ final class EventTapController: NSObject {
         }
         let srcs = registry.enabledSources
         let t: DecisionTrace
-        if srcs.count >= 2 {
+        if srcs.count >= 2,
+           let ruEnt = srcs.first(where: { registry.isRussianSourceID($0.sourceID) }),
+           let latEnt = srcs.first(where: { $0.sourceID != ruEnt.sourceID }),
+           pendingAmbiguous.count == 1, let p0 = pendingAmbiguous.first,
+           let tPhrase = LanguageScorer.tryResolveTwoWordPhrase(
+            prevDisplayed: p0.displayed,
+            prevUS: p0.readingsByID[latEnt.sourceID] ?? p0.alternateScript,
+            prevRU: p0.readingsByID[ruEnt.sourceID] ?? p0.displayed,
+            wordAsUS: wus, wordAsRU: wru, tisIsRussian: tisRU, latSourceId: latEnt.sourceID, lex: lex, minLength: minL
+           ) {
+            var m = tPhrase
+            m.currentSourceID = curId
+            t = m
+            LaunchLog.append("EventTap: phrase_to_en — «\(m.appliedReplacement ?? "")»")
+        } else if srcs.count >= 2 {
             t = LanguageScorer.scoreMulti(.init(currentSourceId: curId, sources: srcs, readingsByID: readings, lex: lex, minLength: minL))
         } else {
             t = LanguageScorer.score(wordAsUS: wus, wordAsRU: wru, tisIsRussian: tisRU, lex: lex, minLength: minL)
         }
         if t.reasonCode == "ambi" || t.reasonCode == "ambi2" {
             if pendingAmbiguous.count < maxPendingAmbiguous {
+                wordBoundariesAfterAmbiPending = 0
+                deferredInterstitialWords.removeAll(keepingCapacity: false)
                 pendingAmbiguous.append(PendingAmbiguousWord(
-                    readingsByID: readings, currentSourceID: curId, displayed: t.asCurrentScript, alternateScript: t.asAlternateScript
+                    readingsByID: readings, currentSourceID: curId, displayed: t.asCurrentScript, alternateScript: t.asAlternateScript,
+                    keyStrokes: lastWordSnapshot.map(\.strokes) ?? []
                 ))
             }
             DispatchQueue.main.async { self.traceHandler(t) }
@@ -516,47 +627,74 @@ final class EventTapController: NSObject {
         if let rec = LanguageScorer.contextTagToRecord(t) {
             LanguageContextModel.shared.recordCompletedWord(resolvedTag: rec)
         }
-        let pCopy = pendingAmbiguous
-        let languageHint = LanguageScorer.inferredLanguageIntent(t, minWord: minL)
-        if !pCopy.isEmpty, let preferLang = languageHint {
-            let want = EnabledKeyboardSourcesRegistry.normalizeLangTag(preferLang)
-            if let have = Self.normalizedPrimaryLang(forSourceID: curId), have == want {
+        var pCopy = pendingAmbiguous
+        var languageHint = LanguageScorer.inferredLanguageIntent(t, minWord: minL)
+        if t.reasonCode == "hold_ru_ctx" {
+            if Self.deferredEnOverrideWhenHoldRuCtx(pending: pCopy, readings: readings, t: t, sources: srcs, lex: lex) != nil {
+                languageHint = "en"
+                LaunchLog.append("EventTap: hold_ru_ctx → deferred en (ambi+текущее en-чтение)")
+            } else {
+                // Иначе «ru» из intent даёт мусор «рун+рщц»; отлож. вставку не делаем.
+                languageHint = nil
+            }
+        }
+        if !pCopy.isEmpty, deferredInterstitialWords.count > maxDeferredInterstitialWords {
+            let d = DecisionTrace(
+                asCurrentScript: t.asCurrentScript, asAlternateScript: t.asAlternateScript, tisWasRussian: tisRU,
+                aInEn: t.aInEn, aInRu: t.aInRu, bInEn: t.bInEn, bInRu: t.bInRu, appliedReplacement: nil, didSwitchTIS: false,
+                reasonCode: "stale_pending_dropped", reasonHuman: "Отлож. сегм. сброшены: слишком длинный хвост после ambi (длинная фраза) — backspace+вставка небезопасны.",
+                switchToSourceID: nil, lexHitsSummary: t.lexHitsSummary, currentSourceID: curId
+            )
+            clearPending()
+            pCopy = []
+            DispatchQueue.main.async { self.traceHandler(d) }
+        }
+        if !pCopy.isEmpty, let preferLang = languageHint, t.reasonCode != "phrase_to_en" {
+            // Без «раскладка уже en — не трогать» здесь: при to_en+U.S. очищали pending без
+            // отложенной переписи; сегмент ambi2 (другой скрипт) оставался, дальше backspace+пусто.
+            let prefixSeg = pCopy + deferredInterstitialWords
+            let parts = prefixSeg.map { Self.targetForPending($0, preferLang: preferLang, lex: lex) }
+            let currentPart = Self.currentWordTextForDeferred(
+                preferLang: preferLang, readings: readings, currentId: curId, t: t, sources: srcs
+            )
+            let wordPieces = (parts + [currentPart]).filter { !$0.isEmpty }
+            let allText = wordPieces.joined(separator: " ")
+            let curDisp = Self.displayCurrentWord(readings: readings, currentId: curId)
+            // Стираем по числу **нажатий** (и пробелов), а не по `displayed`+`curDisp`: иначе одна
+            // и та же «полоса» (ambi-сегм. + «текущее») считалась дважды → backspace > текста, стирался весь абзац.
+            let currentKeyCount = lastWordSnapshot.map { $0.strokes.count } ?? max(wus.count, wru.count, curDisp.count)
+            let backspaceN = prefixSeg.reduce(0) { $0 + Self.deferredKeyCount($1) } + currentKeyCount + prefixSeg.count
+            if allText.isEmpty, backspaceN > 0 {
                 clearPending()
-                let d = DecisionTrace(
-                    asCurrentScript: t.asCurrentScript, asAlternateScript: t.asAlternateScript, tisWasRussian: tisRU,
-                    aInEn: t.aInEn, aInRu: t.aInRu, bInEn: t.bInEn, bInRu: t.bInRu,
-                    appliedReplacement: nil, didSwitchTIS: false,
-                    reasonCode: "skip_same_lang",
-                    reasonHuman: "Системная раскладка уже \(preferLang) — отложенная вставка не выполняется.",
-                    switchToSourceID: nil, lexHitsSummary: t.lexHitsSummary, currentSourceID: curId
-                )
-                DispatchQueue.main.async { self.traceHandler(d) }
+                LaunchLog.append("EventTap: deferred skipped (пустой allText) backspaceN=\(backspaceN)")
                 return Unmanaged.passUnretained(cg)
             }
-            let parts = pCopy.map { Self.targetForPending($0, preferLang: preferLang, lex: lex) }
-            let currentPart = Self.stringForScoredCurrent(readings: readings, currentId: curId, t: t)
-            let allText = (parts + [currentPart]).joined(separator: " ")
-            let curDisp = Self.displayCurrentWord(readings: readings, currentId: curId)
-            let backspaceN = pCopy.reduce(0) { $0 + $1.displayed.count } + curDisp.count + (pCopy.isEmpty ? 0 : pCopy.count)
-            let targetSid = Self.sourceId(forLang: preferLang) ?? curId
+            var targetSid = Self.sourceId(forLang: preferLang) ?? curId
+            let preferNTag = EnabledKeyboardSourcesRegistry.normalizeLangTag(preferLang)
+            if preferNTag == "ru", !EnabledKeyboardSourcesRegistry.shared.isRussianSourceID(targetSid) {
+                targetSid = self.input.resolve().ruID
+                LaunchLog.append("EventTap: deferred targetSid — RU via resolve: \(targetSid) (тек. TIS/список без ru — иначе кирилл. печать с ABC даёт 0 букв)")
+            }
             let boundaryVK = cg.vKey
+            let nPrefixSegm = pCopy.count + deferredInterstitialWords.count
             let dRetro = DecisionTrace(
                 asCurrentScript: t.asCurrentScript, asAlternateScript: t.asAlternateScript, tisWasRussian: tisRU,
                 aInEn: t.aInEn, aInRu: t.aInRu, bInEn: t.bInEn, bInRu: t.bInRu,
                 appliedReplacement: nil, didSwitchTIS: true,
                 reasonCode: "deferred_resolved",
-                reasonHuman: "Отложенно: \(pCopy.count) сегм. → \(preferLang) (по «\(t.asCurrentScript)»), вставка «\(allText)»",
+                reasonHuman: "Отложенно (только план, до CGEvent): \(nPrefixSegm) сегм. (ambi+хвост) → \(preferLang) по «\(t.asCurrentScript)» — вставка «\(allText)». Реальное применение: строка с reason **deferred_applied**; подробности — LanguageSwitcher/launch.log (дом. каталог / App Support).",
                 switchToSourceID: targetSid, lexHitsSummary: t.lexHitsSummary, currentSourceID: curId
             )
             clearPending()
             DispatchQueue.main.async { self.traceHandler(t) }
             DispatchQueue.main.async { self.traceHandler(dRetro) }
-            LaunchLog.append("EventTap: deferred \(pCopy.count) → \(preferLang) + «\(t.asCurrentScript)» backspaces=\(backspaceN)")
-            let wordPieces = parts + [currentPart]
+            LaunchLog.append("EventTap: deferred \(nPrefixSegm) сегм. (ambi+межслов.) → \(preferLang) + «\(t.asCurrentScript)» backspaces=\(backspaceN) insertPlan=«\(allText)»")
+            let preferN = EnabledKeyboardSourcesRegistry.normalizeLangTag(preferLang)
             runSyntheticOnTapThread {
                 self.runWithTapSuspendedForSynthetic {
                     let beforeLayout = EnabledKeyboardSourcesRegistry.shared.liveCurrentInputSourceID()
                     SyntheticKeyboard.backspaces(backspaceN)
+                    Thread.sleep(forTimeInterval: 0.012)
                     if targetSid != beforeLayout {
                         self.pushLayoutUndo(before: beforeLayout)
                     }
@@ -564,44 +702,107 @@ final class EventTapController: NSObject {
                     let list = reg.enabledSources
                     if let ruSid = list.first(where: { reg.isRussianSourceID($0.sourceID) })?.sourceID,
                        let latSid = list.first(where: { !reg.isRussianSourceID($0.sourceID) })?.sourceID {
-                        var firstPiece = true
-                        for piece in wordPieces where !piece.isEmpty {
-                            if !firstPiece { SyntheticKeyboard.postSpace() }
-                            firstPiece = false
-                            let sid = Self.layoutSourceID(forScriptSegment: piece, ruId: ruSid, latId: latSid)
-                            _ = self.input.selectSource(id: sid)
-                            SyntheticKeyboard.type(piece, layoutSourceID: sid)
+                        if preferN == "en", Self.isLatinLetterOrSpaceOnly(allText) {
+                            _ = self.input.selectSource(id: latSid)
+                            Thread.sleep(forTimeInterval: 0.01)
+                            SyntheticKeyboard.type(allText, layoutSourceID: latSid)
+                            LaunchLog.append("EventTap: deferred (fast) type «\(allText)» sid=\(latSid)")
+                        } else {
+                            var firstPiece = true
+                            for piece in wordPieces where !piece.isEmpty {
+                                if !firstPiece { SyntheticKeyboard.postSpace() }
+                                firstPiece = false
+                                let sid = Self.layoutSourceID(forScriptSegment: piece, ruId: ruSid, latId: latSid)
+                                _ = self.input.selectSource(id: sid)
+                                Thread.sleep(forTimeInterval: 0.006)
+                                SyntheticKeyboard.type(piece, layoutSourceID: sid)
+                            }
                         }
                         _ = self.input.selectSource(id: targetSid)
                     } else {
+                        if preferN == "en", Self.isLatinLetterOrSpaceOnly(allText) {
+                            Self.typeDeferredLatinWithResolvedUS(allText, input: self.input)
+                        } else if preferN == "ru" {
+                            // Не `selectSource(targetSid)+type(…, targetSid)`: при одной лат. раскл. в enabled `targetSid`=ABC → кирилл. в map нет, ввод пустой.
+                            Self.typeDeferredCyrillicResolvingRU(allText, input: self.input)
+                        } else {
+                            _ = self.input.selectSource(id: targetSid)
+                            Thread.sleep(forTimeInterval: 0.01)
+                            SyntheticKeyboard.type(allText, layoutSourceID: targetSid)
+                        }
                         _ = self.input.selectSource(id: targetSid)
-                        SyntheticKeyboard.type(allText, layoutSourceID: targetSid)
                     }
                     SyntheticKeyboard.postBoundaryCorresponding(toVirtualKey: boundaryVK)
+                    let liveAfter = EnabledKeyboardSourcesRegistry.shared.liveCurrentInputSourceID()
+                    LaunchLog.append("EventTap: deferred HID end backspaceN=\(backspaceN) typedLen=\(allText.count) afterSid=\(liveAfter)")
+                    let dApplied = DecisionTrace(
+                        asCurrentScript: allText, asAlternateScript: "", tisWasRussian: preferN == "ru",
+                        aInEn: preferN == "en", aInRu: preferN == "ru", bInEn: false, bInRu: false,
+                        appliedReplacement: nil, didSwitchTIS: false,
+                        reasonCode: "deferred_applied",
+                        reasonHuman: "Отлож. вставка: сгенерированы и отправлены HID-события (backspace×\(backspaceN), ввод длины \(allText.count)). Текст в поле всё ещё «старый»? Часто: фокус в другом окне, IME/веб, или права/очередь событий — см. launch log (строка `deferred HID end`).",
+                        switchToSourceID: targetSid, lexHitsSummary: t.lexHitsSummary, currentSourceID: liveAfter
+                    )
+                    DispatchQueue.main.async { self.traceHandler(dApplied) }
                 }
             }
             return nil
         }
         if !pCopy.isEmpty, languageHint == nil {
+            if t.reasonCode != "ambi" && t.reasonCode != "ambi2", hasAnyReading, !t.asCurrentScript.isEmpty {
+                let w = PendingAmbiguousWord(
+                    readingsByID: readings, currentSourceID: curId,
+                    displayed: t.asCurrentScript, alternateScript: t.asAlternateScript,
+                    keyStrokes: lastWordSnapshot.map(\.strokes) ?? []
+                )
+                deferredInterstitialWords.append(w)
+                LaunchLog.append("EventTap: deferred interstitial +«\(w.displayed)» (n=\(deferredInterstitialWords.count))")
+            }
             DispatchQueue.main.async { self.traceHandler(t) }
             return Unmanaged.passUnretained(cg)
         }
-        let skipSameLang = Self.shouldSkipSwitchBecauseCurrentMatchesTarget(curId: curId, t: t)
+        let skipSameLang = Self.shouldSkipSwitchBecauseCurrentMatchesTarget(curId: curId, readings: readings, t: t)
         let traceForUI = skipSameLang ? t.skippingBecauseCurrentLayoutMatchesTarget() : t
         DispatchQueue.main.async { self.traceHandler(traceForUI) }
         if let g = t.appliedReplacement, t.didSwitchTIS, !g.isEmpty, !skipSameLang {
             let aScreen = Self.displayCurrentWord(readings: readings, currentId: curId)
-            let deleteCount = max(t.asCurrentScript.count, aScreen.count)
+            // `phrase_to_en`: в поле «рун рщц» — backspace по двум сегм.; иначе одно слово; после инкрем. TIS см. t.asCurrentScript.
+            let deleteCount: Int
+            if t.reasonCode == "phrase_to_en", let p0 = pendingAmbiguous.first {
+                deleteCount = p0.displayed.count + 1 + wru.count
+                clearPending()
+            } else {
+                deleteCount = max(t.asCurrentScript.count, aScreen.count)
+            }
             let targetSid = t.switchToSourceID ?? Self.inferBinaryTargetId(from: t)
             let boundaryVK = cg.vKey
-            let retypeNeeded = !Self.isSameLexicalForm(g, aScreen)
+            let retypeNeeded = t.reasonCode == "phrase_to_en" || !Self.isSameLexicalForm(g, t.asCurrentScript)
             runSyntheticOnTapThread {
                 self.runWithTapSuspendedForSynthetic {
                     let beforeLayout = EnabledKeyboardSourcesRegistry.shared.liveCurrentInputSourceID()
                     if retypeNeeded {
                         SyntheticKeyboard.backspaces(deleteCount)
                     }
-                    if let sid = targetSid {
+                    // to_en / phrase_to_en: `selectSource(sid)` из short list даёт -1, если U.S. нет в кэше — TIS
+                    // оставалась RU, ветка `else if to_en` не вызывалась. Сначала U.S. через `selectUS` (resolve+TIS).
+                    if t.reasonCode == "to_en" {
+                        let r = self.input.resolve()
+                        if beforeLayout != r.usID {
+                            self.pushLayoutUndo(before: beforeLayout)
+                        }
+                        _ = self.input.selectUS()
+                    } else if t.reasonCode == "phrase_to_en" {
+                        let r = self.input.resolve()
+                        if (targetSid.map { $0 != beforeLayout } ?? true) && beforeLayout != r.usID {
+                            self.pushLayoutUndo(before: beforeLayout)
+                        }
+                        if let s = targetSid, !EnabledKeyboardSourcesRegistry.shared.isRussianSourceID(s) {
+                            let st = self.input.selectSource(id: s)
+                            if st != 0 { _ = self.input.selectUS() }
+                        } else {
+                            _ = self.input.selectUS()
+                        }
+                    } else if let sid = targetSid {
                         if sid != beforeLayout {
                             self.pushLayoutUndo(before: beforeLayout)
                         }
@@ -611,14 +812,19 @@ final class EventTapController: NSObject {
                             self.pushLayoutUndo(before: beforeLayout)
                         }
                         _ = self.input.selectRussian()
-                    } else if t.reasonCode == "to_en" {
-                        if let en = Self.sourceId(forLang: "en"), en != beforeLayout {
-                            self.pushLayoutUndo(before: beforeLayout)
-                        }
-                        _ = self.input.selectUS()
                     }
                     if retypeNeeded {
-                        let typeSid = targetSid ?? (t.reasonCode == "to_ru" ? Self.sourceId(forLang: "ru") : Self.sourceId(forLang: "en")) ?? EnabledKeyboardSourcesRegistry.shared.liveCurrentInputSourceID()
+                        var typeSid = targetSid
+                            ?? (t.reasonCode == "to_ru" ? Self.sourceId(forLang: "ru") : Self.sourceId(forLang: "en"))
+                            ?? EnabledKeyboardSourcesRegistry.shared.liveCurrentInputSourceID() // to_en, phrase_to_en → en
+                        if t.reasonCode == "to_en" || t.reasonCode == "phrase_to_en" {
+                            let r = self.input.resolve()
+                            if Self.isLatinLetterOrSpaceOnly(g), EnabledKeyboardSourcesRegistry.shared.isRussianSourceID(typeSid) {
+                                typeSid = r.usID
+                            }
+                        }
+                        // Дать TIS/фокусу проглотить смену раскладки до HID-символов, иначе буквы могут пойти в старой раскладке.
+                        Thread.sleep(forTimeInterval: 0.006)
                         SyntheticKeyboard.type(g, layoutSourceID: typeSid)
                     }
                     SyntheticKeyboard.postBoundaryCorresponding(toVirtualKey: boundaryVK)
@@ -634,7 +840,7 @@ final class EventTapController: NSObject {
         switch t.reasonCode {
         case "to_ru":
             return e.first { $0.sourceID.lowercased().contains("russian") || $0.primaryLang == "ru" }?.sourceID
-        case "to_en":
+        case "to_en", "phrase_to_en":
             return e.first { !$0.sourceID.lowercased().contains("russian") }?.sourceID
         default: return nil
         }
@@ -648,6 +854,7 @@ final class EventTapController: NSObject {
     private static func resolvedTargetLanguageTag(from t: DecisionTrace) -> String? {
         if let sid = t.switchToSourceID, !sid.isEmpty, let l = normalizedPrimaryLang(forSourceID: sid) { return l }
         if let inferred = inferBinaryTargetId(from: t), !inferred.isEmpty, let l = normalizedPrimaryLang(forSourceID: inferred) { return l }
+        if t.reasonCode == "phrase_to_en" { return "en" }
         if t.reasonCode.hasPrefix("to_") {
             let tail = String(t.reasonCode.dropFirst(3))
             if !tail.isEmpty { return EnabledKeyboardSourcesRegistry.normalizeLangTag(tail) }
@@ -655,9 +862,11 @@ final class EventTapController: NSObject {
         return nil
     }
 
-    /// User already has the target language selected in TIS — do not replace text or switch again.
-    private static func shouldSkipSwitchBecauseCurrentMatchesTarget(curId: String, t: DecisionTrace) -> Bool {
+    /// Do not re-type / «skip» only when экранный текст уже совпадает с подстановкой **и** TIS у цели.
+    /// Не сравнивать `rep` с `readings[curId]`: при инкрем. смене TIS U.S. там уже «make», в поле остаётся «ьфлу»; эталон — `t.asCurrentScript` (как в LanguageScorer).
+    private static func shouldSkipSwitchBecauseCurrentMatchesTarget(curId: String, readings _: [String: String], t: DecisionTrace) -> Bool {
         guard t.didSwitchTIS, let rep = t.appliedReplacement, !rep.isEmpty else { return false }
+        if !isSameLexicalForm(rep, t.asCurrentScript) { return false }
         if let sid = t.switchToSourceID, !sid.isEmpty, sid == curId { return true }
         if let inferred = inferBinaryTargetId(from: t), !inferred.isEmpty, inferred == curId { return true }
         guard let want = resolvedTargetLanguageTag(from: t) else { return false }

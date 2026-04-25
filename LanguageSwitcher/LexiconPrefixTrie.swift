@@ -29,4 +29,14 @@ final class LexiconPrefixTrie {
         }
         return n.maxScore
     }
+
+    /// Сколько разных следующих букв в поддереве (ветвление индекса) для префикса; 0, если пути нет.
+    func branchWidthAfter(prefix: String) -> Int {
+        var n = root
+        for ch in prefix {
+            guard let nx = n.child[ch] else { return 0 }
+            n = nx
+        }
+        return n.child.count
+    }
 }

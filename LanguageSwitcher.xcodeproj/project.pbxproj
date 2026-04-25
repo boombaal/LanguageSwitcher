@@ -32,6 +32,9 @@
 		BF1B /* LanguageContextModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR1B; };
 		BF1C /* ScriptHeuristics.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR1C; };
 		BF1D /* LexiconPrefixTrie.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR1D; };
+		BF1E /* IncrementalNgramScoring.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR1E; };
+		BF1F /* RuMorphology.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR1F; };
+		BF20 /* PhraseLevelScoring.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR20; };
 		BF14 /* ls_early.c in Sources */ = {isa = PBXBuildFile; fileRef = FR14; };
 		BF10 /* en.txt in Resources */ = {isa = PBXBuildFile; fileRef = FR10; };
 		BF11 /* ru.txt in Resources */ = {isa = PBXBuildFile; fileRef = FR11; };
@@ -65,6 +68,9 @@
 		FR1B /* LanguageContextModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LanguageContextModel.swift; sourceTree = "<group>"; };
 		FR1C /* ScriptHeuristics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptHeuristics.swift; sourceTree = "<group>"; };
 		FR1D /* LexiconPrefixTrie.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LexiconPrefixTrie.swift; sourceTree = "<group>"; };
+		FR1E /* IncrementalNgramScoring.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncrementalNgramScoring.swift; sourceTree = "<group>"; };
+		FR1F /* RuMorphology.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuMorphology.swift; sourceTree = "<group>"; };
+		FR20 /* PhraseLevelScoring.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhraseLevelScoring.swift; sourceTree = "<group>"; };
 		FR14 /* ls_early.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = ls_early.c; sourceTree = "<group>"; };
 		FR10 /* en.txt */ = {isa = PBXFileReference; lastKnownType = text; path = en.txt; sourceTree = "<group>"; };
 		FR11 /* ru.txt */ = {isa = PBXFileReference; lastKnownType = text; path = ru.txt; sourceTree = "<group>"; };
@@ -77,7 +83,7 @@
 /* Begin PBXGroup section */
 		ROOT = {isa = PBXGroup; children = (GSRC, FPROD, FR00, ); sourceTree = "<group>"; };
 		GLEX = {isa = PBXGroup; children = (FR10, FR11,); path = Lexicon; sourceTree = "<group>"; };
-		GSRC = {isa = PBXGroup; children = (GLEX, FR14, FR15, FR01, FR02, FR03, FR04, FR05, FR06, FR07, FR08, FR09, FR0A, FR0B, FR0C, FR0D, FR0E, FR0F, FR12, FR16, FR17, FR18, FR19, FR1A, FR1B, FR1C, FR1D, ); path = LanguageSwitcher; sourceTree = "<group>"; };
+		GSRC = {isa = PBXGroup; children = (GLEX, FR14, FR15, FR01, FR02, FR03, FR04, FR05, FR06, FR07, FR08, FR09, FR0A, FR0B, FR0C, FR0D, FR0E, FR0F, FR12, FR16, FR17, FR18, FR19, FR1A, FR1B, FR1C, FR1D, FR1E, FR1F, FR20, ); path = LanguageSwitcher; sourceTree = "<group>"; };
 		FPROD = {isa = PBXGroup; children = (APP, ); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
@@ -111,7 +117,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		PHS = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (BF14, BF15, BF01, BF02, BF03, BF04, BF05, BF06, BF07, BF08, BF09, BF0A, BF0B, BF0C, BF0D, BF0E, BF0F, BF12, BF16, BF17, BF18, BF19, BF1A, BF1B, BF1C, BF1D, ); runOnlyForDeploymentPostprocessing = 0; };
+		PHS = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (BF14, BF15, BF01, BF02, BF03, BF04, BF05, BF06, BF07, BF08, BF09, BF0A, BF0B, BF0C, BF0D, BF0E, BF0F, BF12, BF16, BF17, BF18, BF19, BF1A, BF1B, BF1C, BF1D, BF1E, BF1F, BF20, ); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */

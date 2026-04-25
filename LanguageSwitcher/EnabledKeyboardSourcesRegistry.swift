@@ -62,10 +62,31 @@ final class EnabledKeyboardSourcesRegistry {
         let list = Self.querySelectableKeyboardSources()
         let cur = Self.currentKeyboardSourceID()
         lock.lock()
-        entries = list
+        if !list.isEmpty {
+            entries = list
+        } else {
+            // TIS нередко кратковременно отдаёт пустой список при смене раскладки; не затираем кэш.
+            if entries.isEmpty, let u = TISCreateASCIICapableInputSourceList() {
+                let fallback = u.takeRetainedValue() as! [TISInputSource]
+                let mapped = Self.entriesFromTISList(fallback)
+                if !mapped.isEmpty { entries = mapped }
+            }
+        }
         currentSourceID = cur
+        let n = entries.count
         lock.unlock()
-        LaunchLog.append("KeyboardRegistry: \(list.count) sources, current=\(cur)")
+        LaunchLog.append("KeyboardRegistry: \(n) sources (TIS list query \(list.count)), current=\(cur)")
+    }
+
+    private static func entriesFromTISList(_ arr: [TISInputSource]) -> [KeyboardSourceEntry] {
+        arr.map { s in
+            let langs = stringArrayProperty(s, kTISPropertyInputSourceLanguages)
+            let primary = normalizeLangTag(langs.first ?? "")
+            return KeyboardSourceEntry(
+                sourceID: id(s), primaryLang: primary, languages: langs,
+                asciiCapable: boolProperty(s, kPropAsciiCapable)
+            )
+        }
     }
 
     /// Updates only `currentInputSourceID` from `TISCopyCurrentKeyboardInputSource` (cheap).

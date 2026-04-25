@@ -17,6 +17,9 @@ final class AppSettings: NSObject {
     private let kFuzzyMin = "fuzzyMinWordLength"
     private let kIncremental = "incrementalLayoutSwitch"
     private let kIncPrefixMin = "incrementalPrefixMinLength"
+    private let kIncCool = "incrementalLayoutCooldownS"
+    private let kIncMinConf = "incrementalMinConfidence"
+    private let kIncDbg = "incrementalScoringDebug"
 
     var minWordLength: Int {
         get { min(10, max(1, d.integer(forKey: kMinWord) == 0 ? 2 : d.integer(forKey: kMinWord))) }
@@ -74,5 +77,26 @@ final class AppSettings: NSObject {
     var incrementalPrefixMinLength: Int {
         get { min(12, max(1, d.integer(forKey: kIncPrefixMin) == 0 ? 2 : d.integer(forKey: kIncPrefixMin))) }
         set { d.set(newValue, forKey: kIncPrefixMin) }
+    }
+
+    /// Post-switch подавление «дёргать» (сек, 0.15…1.0).
+    var incrementalLayoutCooldown: TimeInterval {
+        get {
+            let v = d.double(forKey: kIncCool)
+            if v <= 0 { return 0.42 }
+            return min(1.2, max(0.15, v))
+        }
+        set { d.set(newValue, forKey: kIncCool) }
+    }
+
+    /// Порог `confidence` (накопл. 0…1) для пошаговой смены.
+    var incrementalMinConfidence: Double {
+        get { min(0.95, max(0.04, d.object(forKey: kIncMinConf) as? Double ?? 0.14)) }
+        set { d.set(newValue, forKey: kIncMinConf) }
+    }
+
+    var incrementalScoringDebug: Bool {
+        get { d.object(forKey: kIncDbg) as? Bool ?? false }
+        set { d.set(newValue, forKey: kIncDbg) }
     }
 }

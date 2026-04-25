@@ -47,7 +47,7 @@ final class SettingsBox: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
     fileprivate var window: NSWindow!
     private let o = SettingsApply()
     private var tMin, tLog, tEn, tRu, tMan: NSTextField!
-    private var cAuto, cLx, cFuzzy, cInc: NSButton!
+    private var cAuto, cLx, cFuzzy, cInc, cIncDbg: NSButton!
     private var tFuzzyMin, tIncMin: NSTextField!
     private var tab: NSTableView!
     private var rows: [DecisionTrace] = []
@@ -92,6 +92,8 @@ final class SettingsBox: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
         cInc = NSButton(checkboxWithTitle: "По буквам: смена TIS при префиксе в словаре", target: nil, action: nil)
         cInc.state = a.incrementalLayoutSwitchEnabled ? .on : .off
         tIncMin = NSTextField(string: "\(a.incrementalPrefixMinLength)"); tIncMin.frame.size = NSSize(width: 40, height: 22)
+        cIncDbg = NSButton(checkboxWithTitle: "Дебаг пошаговых скоров (~/LanguageSwitcher-launch.log)", target: nil, action: nil)
+        cIncDbg.state = a.incrementalScoringDebug ? .on : .off
 
         let g = NSGridView(views: [
             [Self.label("min word:"), tMin, Self.label("log N:"), tLog],
@@ -100,7 +102,8 @@ final class SettingsBox: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
             [Self.label("TIS RU:"), tRu, NSView(), NSView()],
             [Self.label("Манифест:"), tMan, NSView(), NSView()],
             [NSView(), cFuzzy, Self.label("fuzzy min:"), tFuzzyMin],
-            [NSView(), cInc, Self.label("префикс min:"), tIncMin]
+            [NSView(), cInc, Self.label("префикс min:"), tIncMin],
+            [NSView(), cIncDbg, NSView(), NSView()]
         ])
         g.columnSpacing = 8; g.rowSpacing = 6; g.translatesAutoresizingMaskIntoConstraints = false
         let grid: NSView = g
@@ -177,6 +180,7 @@ final class SettingsBox: NSObject, NSTableViewDataSource, NSTableViewDelegate, N
         a.fuzzyMinWordLength = min(12, max(3, Int(tFuzzyMin?.stringValue ?? "4") ?? 4))
         a.incrementalLayoutSwitchEnabled = (cInc.state == .on)
         a.incrementalPrefixMinLength = min(12, max(1, Int(tIncMin?.stringValue ?? "2") ?? 2))
+        a.incrementalScoringDebug = (cIncDbg.state == .on)
     }
     fileprivate func copyRow() {
         let r = tab?.selectedRow ?? -1; guard r >= 0, r < rows.count else { return }

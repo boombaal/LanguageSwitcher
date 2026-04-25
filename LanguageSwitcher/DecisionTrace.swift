@@ -74,16 +74,24 @@ enum LanguageScorer {
     /// Preferred language tag from a confident trace (`en`, `ru`, …). `nil` if no signal.
     static func inferredLanguageIntent(_ t: DecisionTrace, minWord: Int) -> String? {
         let n = t.asCurrentScript
+        // Длина minWord в скоринге (например 4) не должна глушить намерение для ok_:
+        // иначе «how»+pending остаётся без deferred, pending залипает (ниже languageHint==nil).
         let lenOk = n.count >= max(2, minWord)
-        if t.reasonCode.hasPrefix("ok_"), lenOk {
+        let lenOkForOkPrefix = n.count >= 2
+        if t.reasonCode.hasPrefix("ok_") {
             let tag = String(t.reasonCode.dropFirst(3))
-            if tag == "en", t.aInEn { return "en" }
-            if tag == "ru", t.aInRu { return "ru" }
-            if !tag.isEmpty { return tag }
+            let allowOkTag = n.count >= 2 || lenOk
+            if allowOkTag {
+                if tag == "en", t.aInEn { return "en" }
+                if tag == "ru", t.aInRu { return "ru" }
+                if !tag.isEmpty { return tag }
+            }
         }
         switch t.reasonCode {
         case "to_en": return "en"
         case "to_ru": return "ru"
+        case "hold_ru_ctx": return "ru"
+        case "phrase_to_en": return "en"
         default:
             if t.reasonCode.hasPrefix("to_") { return String(t.reasonCode.dropFirst(3)) }
             return nil
@@ -126,7 +134,7 @@ enum LanguageScorer {
     private static func inferSwitchId(from t: DecisionTrace, ruId: String, latId: String) -> String? {
         switch t.reasonCode {
         case "to_ru": return ruId
-        case "to_en": return latId
+        case "to_en", "phrase_to_en": return latId
         default: return nil
         }
     }
@@ -289,6 +297,41 @@ enum LanguageScorer {
         WordPlausibility.score01(word: s, lang: "ru", lex: lex) >= WordPlausibility.acceptThreshold
     }
 
+    /// Два слова подряд (pending ambi + текущее): phrase en vs ru; иначе `nil` — обычный score по текущему слову.
+    static func tryResolveTwoWordPhrase(
+        prevDisplayed: String,
+        prevUS: String,
+        prevRU: String,
+        wordAsUS: String,
+        wordAsRU: String,
+        tisIsRussian: Bool,
+        latSourceId: String,
+        lex: LexiconStore,
+        minLength: Int
+    ) -> DecisionTrace? {
+        guard tisIsRussian else { return nil }
+        guard prevDisplayed.count >= minLength, wordAsRU.count >= minLength, prevUS.count >= minLength, wordAsUS.count >= minLength else { return nil }
+        let sE = PhraseLevelScoring.pairPhrasePlaus01(p1: prevUS, p2: wordAsUS, lang: "en", lex: lex)
+        let sR = PhraseLevelScoring.pairPhrasePlaus01(p1: prevRU, p2: wordAsRU, lang: "ru", lex: lex)
+        let margin: Double = 0.10
+        guard sE - sR > margin, sE >= 0.48 else { return nil }
+        let a = wordAsRU
+        let b = wordAsUS
+        let aEn = inEN(a, lex: lex)
+        let aRu = inRU(a, lex: lex)
+        let bEn = inEN(b, lex: lex)
+        let bRu = inRU(b, lex: lex)
+        let rep = prevUS + " " + wordAsUS
+        let h = "Фраза (2 слова): en \(String(format: "%.2f", sE)) > ru \(String(format: "%.2f", sR)) — U.S.: «\(rep)» вместо «\(prevRU) \(wordAsRU)»"
+        return DecisionTrace(
+            asCurrentScript: a, asAlternateScript: b, tisWasRussian: tisIsRussian,
+            aInEn: aEn, aInRu: aRu, bInEn: bEn, bInRu: bRu,
+            appliedReplacement: rep, didSwitchTIS: true,
+            reasonCode: "phrase_to_en", reasonHuman: h,
+            switchToSourceID: latSourceId, lexHitsSummary: "phrase E=\(String(format: "%.2f", sE)) R=\(String(format: "%.2f", sR))", currentSourceID: ""
+        )
+    }
+
     static func score(
         wordAsUS: String,
         wordAsRU: String,
@@ -345,6 +388,12 @@ enum LanguageScorer {
             }
             if !aRu && bEn && aEn { return noSwitch(a, b, aEn, aRu, bEn, bRu, tisIsRussian, "ambi", "EN и RU варианты в словаре — не трогаем: «\(a)»/«\(b)»") }
             if !aRu && bEn {
+                if LanguageContextModel.shared.shouldHoldRuTisVsShortEnReading(englishWordLength: b.count) {
+                    return noSwitch(
+                        a, b, aEn, aRu, bEn, bRu, tisIsRussian, "hold_ru_ctx",
+                        "Продолжение RU-фразы: короткое en-чтение «\(b)» (на экране «\(a)») — не смена на U.S. (возм. неверные клавиши в RU-раскладке)."
+                    )
+                }
                 return .init(
                     asCurrentScript: a, asAlternateScript: b, tisWasRussian: tisIsRussian,
                     aInEn: aEn, aInRu: aRu, bInEn: bEn, bInRu: bRu, appliedReplacement: b, didSwitchTIS: true,

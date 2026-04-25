@@ -110,6 +110,22 @@ final class LanguageContextModel: NSObject {
         contextRecencyBoost(for: tag) + systemUIScoreBoost(for: tag) + personalStyleBoost(for: tag)
     }
 
+    /// 0…~0.1: после завершённого RU (напр. «все») следующее слово с большей вероятностью RU.
+    func ruContinuityPlausibilityBoost() -> Double {
+        lock.lock(); defer { lock.unlock() }
+        if lastCompletedTag == "ru" { return 0.1 }
+        let tail = recentTags.suffix(2)
+        if tail.contains("ru") { return 0.05 }
+        return 0
+    }
+
+    /// Удержать русскую раскладку: только что закончили RU-слово — короткие en-чтения (how→рщц) чаще мискорд, не U.S.
+    func shouldHoldRuTisVsShortEnReading(englishWordLength: Int, maxLen: Int = 3) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard lastCompletedTag == "ru" else { return false }
+        return englishWordLength > 0 && englishWordLength <= maxLen
+    }
+
     // MARK: - Recording
 
     /// Call at word boundary when a language is known from trace.
@@ -132,6 +148,16 @@ final class LanguageContextModel: NSObject {
         if recentTags.count > maxRecent { recentTags.removeFirst(recentTags.count - maxRecent) }
         lock.unlock()
         save()
+    }
+
+    /// Небольшой bias к последним 3–5 завершённым словам (инкрементальный TIS).
+    func incrementalLangBias(for tag: String) -> Double {
+        let t = EnabledKeyboardSourcesRegistry.normalizeLangTag(tag)
+        guard t == "en" || t == "ru" else { return 0 }
+        if let maj = last5BinaryMajority() {
+            return maj == t ? 0.14 : -0.07
+        }
+        return systemUIScoreBoost(for: t) * 0.55
     }
 
     /// Last 5 "binary" (en/ru) words as frequency hint — same as `personalStyleBoost` + optional bump.

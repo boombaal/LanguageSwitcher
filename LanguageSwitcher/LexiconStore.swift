@@ -122,9 +122,49 @@ final class LexiconStore {
         return raw.lowercased()
     }
 
-    /// Legacy boolean; `prefixLexiconScore > 0` is the score-based version.
+    /// Сводный префикс-скор 0…1: глубина, число кандидатов-слов, ветвление, лучший лекс-скор. Не bool.
+    func prefixScore01(lang: String, prefix raw: String) -> Double {
+        let m = prefixScoringMetadata(lang: lang, prefix: raw)
+        if m.matchDepth < 1 { return 0 }
+        let d = 1.0 - exp(-0.5 * Double(m.matchDepth))
+        let c = log(1.0 + Double(min(m.candidateCount, 8000))) / log(1.0 + 8000.0)
+        let b = min(1, log(1.0 + Double(max(0, m.trieBranchWidth))) / 4.0)
+        let l = min(1, m.bestLexScore / max(0.1, Self.prefixScoreUpperBound))
+        return min(1, 0.22 * d + 0.2 * c + 0.12 * b + 0.46 * l)
+    }
+
+    /// API из рекомендации (String-теги `en` / `ru` как в остальном проекте).
+    func prefixScore(_ prefix: String, lang: String) -> Float {
+        Float(prefixScore01(lang: lang, prefix: prefix))
+    }
+
+    /// Детали для дебага / UI.
+    func prefixScoringMetadata(lang: String, prefix raw: String) -> (matchDepth: Int, candidateCount: Int, trieBranchWidth: Int, bestLexScore: Double) {
+        let tag = EnabledKeyboardSourcesRegistry.normalizeLangTag(lang)
+        let p = Self.normalizeForPrefixLookup(lang: lang, raw: raw)
+        guard !p.isEmpty else { return (0, 0, 0, 0) }
+        lock.lock()
+        let trie = prefixTrieByLang[tag]
+        let sorted = sortedWordsByLang[tag] ?? []
+        lock.unlock()
+        let best = prefixLexiconScore(lang: lang, prefix: raw)
+        let branch = trie?.branchWidthAfter(prefix: p) ?? 0
+        let cnt: Int
+        if !sorted.isEmpty, let (lo, hi) = prefixWordRange(sorted: sorted, p: p) {
+            cnt = min(50_000, hi - lo)
+        } else { cnt = 0 }
+        return (p.count, cnt, branch, best)
+    }
+
+    private static func normalizeForPrefixLookup(lang: String, raw: String) -> String {
+        let tag = EnabledKeyboardSourcesRegistry.normalizeLangTag(lang)
+        if tag == "ru" { return raw.lowercased().replacingOccurrences(of: "ё", with: "е") }
+        return raw.lowercased()
+    }
+
+    /// Устар. «есть/нет»; оставляем на совместимость — по факту bestLex > 0.
     func hasPrefixMatch(lang: String, prefix raw: String) -> Bool {
-        prefixLexiconScore(lang: lang, prefix: raw) > 0.001
+        prefixScoringMetadata(lang: lang, prefix: raw).bestLexScore > 0.001
     }
 
     /// Language-model–lite: rank among prefix-matching words, length and «head of word» weighting. 0 = no prefix.

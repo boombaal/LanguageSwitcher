@@ -1,0 +1,155 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		BF01 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR01; };
+		BF02 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR02; };
+		BF03 /* CGEvent+Keycode.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR03; };
+		BF04 /* DecisionLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR04; };
+		BF05 /* DecisionTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR05; };
+		BF06 /* EventTapController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR06; };
+		BF07 /* InputSourceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR07; };
+		BF08 /* Keymap.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR08; };
+		BF09 /* LexiconStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR09; };
+		BF0A /* PermissionsHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR0A; };
+		BF0B /* SettingsUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR0B; };
+		BF0C /* StatusBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR0C; };
+		BF0D /* SyntheticKeyboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR0D; };
+		BF0E /* WordBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR0E; };
+		BF0F /* LaunchDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR0F; };
+		BF12 /* LaunchLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR12; };
+		BF15 /* AppMain.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR15; };
+		BF16 /* EnabledKeyboardSourcesRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR16; };
+		BF17 /* KeyStrokesTranslator.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR17; };
+		BF18 /* LexiconDownloadService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR18; };
+		BF19 /* FuzzyLexiconMatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR19; };
+		BF1A /* PlausibilityScoring.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR1A; };
+		BF1B /* LanguageContextModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR1B; };
+		BF1C /* ScriptHeuristics.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR1C; };
+		BF1D /* LexiconPrefixTrie.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR1D; };
+		BF14 /* ls_early.c in Sources */ = {isa = PBXBuildFile; fileRef = FR14; };
+		BF10 /* en.txt in Resources */ = {isa = PBXBuildFile; fileRef = FR10; };
+		BF11 /* ru.txt in Resources */ = {isa = PBXBuildFile; fileRef = FR11; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		APP /* LanguageSwitcher.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LanguageSwitcher.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		FR00 /* Info.plist */ = {isa = PBXFileReference; lastKnownType = text.plist.info; name = Info.plist; path = LanguageSwitcher/Info.plist; sourceTree = "<group>"; };
+		FR15 /* AppMain.swift */ = {isa = PBXFileReference; lastKnownType = sourcecode.swift; path = AppMain.swift; sourceTree = "<group>"; };
+		FR01 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		FR02 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
+		FR03 /* CGEvent+Keycode.swift */ = {isa = PBXFileReference; lastKnownType = sourcecode.swift; path = "CGEvent+Keycode.swift"; sourceTree = "<group>"; };
+		FR04 /* DecisionLog.swift */ = {isa = PBXFileReference; lastKnownType = sourcecode.swift; path = DecisionLog.swift; sourceTree = "<group>"; };
+		FR05 /* DecisionTrace.swift */ = {isa = PBXFileReference; lastKnownType = sourcecode.swift; path = DecisionTrace.swift; sourceTree = "<group>"; };
+		FR06 /* EventTapController.swift */ = {isa = PBXFileReference; lastKnownType = sourcecode.swift; path = EventTapController.swift; sourceTree = "<group>"; };
+		FR07 /* InputSourceManager.swift */ = {isa = PBXFileReference; lastKnownType = sourcecode.swift; path = InputSourceManager.swift; sourceTree = "<group>"; };
+		FR08 /* Keymap.swift */ = {isa = PBXFileReference; lastKnownType = sourcecode.swift; path = Keymap.swift; sourceTree = "<group>"; };
+		FR09 /* LexiconStore.swift */ = {isa = PBXFileReference; lastKnownType = sourcecode.swift; path = LexiconStore.swift; sourceTree = "<group>"; };
+		FR0A /* PermissionsHelper.swift */ = {isa = PBXFileReference; lastKnownType = sourcecode.swift; path = PermissionsHelper.swift; sourceTree = "<group>"; };
+		FR0B /* SettingsUI.swift */ = {isa = PBXFileReference; lastKnownType = sourcecode.swift; path = SettingsUI.swift; sourceTree = "<group>"; };
+		FR0C /* StatusBarController.swift */ = {isa = PBXFileReference; lastKnownType = sourcecode.swift; path = StatusBarController.swift; sourceTree = "<group>"; };
+		FR0D /* SyntheticKeyboard.swift */ = {isa = PBXFileReference; lastKnownType = sourcecode.swift; path = SyntheticKeyboard.swift; sourceTree = "<group>"; };
+		FR0E /* WordBuffer.swift */ = {isa = PBXFileReference; lastKnownType = sourcecode.swift; path = WordBuffer.swift; sourceTree = "<group>"; };
+		FR0F /* LaunchDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchDiagnostics.swift; sourceTree = "<group>"; };
+		FR12 /* LaunchLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchLog.swift; sourceTree = "<group>"; };
+		FR16 /* EnabledKeyboardSourcesRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnabledKeyboardSourcesRegistry.swift; sourceTree = "<group>"; };
+		FR17 /* KeyStrokesTranslator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyStrokesTranslator.swift; sourceTree = "<group>"; };
+		FR18 /* LexiconDownloadService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LexiconDownloadService.swift; sourceTree = "<group>"; };
+		FR19 /* FuzzyLexiconMatch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FuzzyLexiconMatch.swift; sourceTree = "<group>"; };
+		FR1A /* PlausibilityScoring.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlausibilityScoring.swift; sourceTree = "<group>"; };
+		FR1B /* LanguageContextModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LanguageContextModel.swift; sourceTree = "<group>"; };
+		FR1C /* ScriptHeuristics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptHeuristics.swift; sourceTree = "<group>"; };
+		FR1D /* LexiconPrefixTrie.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LexiconPrefixTrie.swift; sourceTree = "<group>"; };
+		FR14 /* ls_early.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = ls_early.c; sourceTree = "<group>"; };
+		FR10 /* en.txt */ = {isa = PBXFileReference; lastKnownType = text; path = en.txt; sourceTree = "<group>"; };
+		FR11 /* ru.txt */ = {isa = PBXFileReference; lastKnownType = text; path = ru.txt; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		PHFW /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = ( ); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		ROOT = {isa = PBXGroup; children = (GSRC, FPROD, FR00, ); sourceTree = "<group>"; };
+		GLEX = {isa = PBXGroup; children = (FR10, FR11,); path = Lexicon; sourceTree = "<group>"; };
+		GSRC = {isa = PBXGroup; children = (GLEX, FR14, FR15, FR01, FR02, FR03, FR04, FR05, FR06, FR07, FR08, FR09, FR0A, FR0B, FR0C, FR0D, FR0E, FR0F, FR12, FR16, FR17, FR18, FR19, FR1A, FR1B, FR1C, FR1D, ); path = LanguageSwitcher; sourceTree = "<group>"; };
+		FPROD = {isa = PBXGroup; children = (APP, ); name = Products; sourceTree = "<group>"; };
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		TR1 /* LanguageSwitcher */ = {isa = PBXNativeTarget; buildConfigurationList = CFLST; buildPhases = (PHS, PHR, PHFW, ); buildRules = ( ); dependencies = ( );
+			name = LanguageSwitcher; productName = LanguageSwitcher; productReference = APP; productType = "com.apple.product-type.application"; };
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		PR1 = {
+			isa = PBXProject;
+			attributes = {
+				BuildTargetAttributes = {TR1 = {CreatedOnToolsVersion = 1600.0; ProvisioningStyle = Automatic;};};
+				LastSwiftUpdateCheck = 1600;
+			};
+			buildConfigurationList = PCFGL;
+			compatibilityVersion = "Xcode 15.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base, );
+			mainGroup = ROOT;
+			productRefGroup = FPROD;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (TR1, );
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		PHR = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (BF10, BF11, ); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		PHS = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (BF14, BF15, BF01, BF02, BF03, BF04, BF05, BF06, BF07, BF08, BF09, BF0A, BF0B, BF0C, BF0D, BF0E, BF0F, BF12, BF16, BF17, BF18, BF19, BF1A, BF1B, BF1C, BF1D, ); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		DT = {isa = XCBuildConfiguration; buildSettings = {
+			CODE_SIGNING_ALLOWED = YES;
+			CODE_SIGN_ENTITLEMENTS = "";
+			CODE_SIGN_IDENTITY = "-";
+			"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+			COMBINE_HIDPI_IMAGES = YES;
+			CURRENT_PROJECT_VERSION = 1; DEAD_CODE_STRIPPING = YES; ENABLE_APP_SANDOX = NO; ENABLE_HARDENED_RUNTIME = NO; GENERATE_INFOPLIST_FILE = NO;
+			INFOPLIST_FILE = LanguageSwitcher/Info.plist; INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+			LD_RUNPATH_SEARCH_PATHS = ( "$(inherited)", "@executable_path/../Frameworks" );
+			MACOSX_DEPLOYMENT_TARGET = 13.0; MARKETING_VERSION = 1.0.0; PRODUCT_BUNDLE_IDENTIFIER = com.languageswitcher.app; PRODUCT_NAME = LanguageSwitcher; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0;
+		};
+			name = Debug;
+		};
+		RT = {isa = XCBuildConfiguration; buildSettings = { CODE_SIGNING_ALLOWED = YES; CODE_SIGN_ENTITLEMENTS = "";
+			CODE_SIGN_IDENTITY = "-"; "CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+			COMBINE_HIDPI_IMAGES = YES; CURRENT_PROJECT_VERSION = 1; DEAD_CODE_STRIPPING = YES; ENABLE_APP_SANDOX = NO; ENABLE_HARDENED_RUNTIME = NO; GENERATE_INFOPLIST_FILE = NO;
+			INFOPLIST_FILE = LanguageSwitcher/Info.plist; LD_RUNPATH_SEARCH_PATHS = ( "$(inherited)", "@executable_path/../Frameworks" );
+			MACOSX_DEPLOYMENT_TARGET = 13.0; MARKETING_VERSION = 1.0.0; PRODUCT_BUNDLE_IDENTIFIER = com.languageswitcher.app; PRODUCT_NAME = LanguageSwitcher; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0;
+		};
+			name = Release;
+		};
+		PD = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; CLANG_ENABLE_OBJC_WEAK = YES; CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES; CLANG_WARN_BOOL_CONVERSION = YES; CLANG_WARN_CONSTANT_CONVERSION = YES; CLANG_WARN_ENUM_CONVERSION = YES; CLANG_WARN_INFINITE_RECURSION = YES; CLANG_WARN_INT_CONVERSION = YES; CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES; CLANG_WARN__DUPLICATE_METHOD_MATCH = YES; DEVELOPMENT_TEAM = ""; ENABLE_NS_ASSERTIONS = YES; ENABLE_STRICT_OBJC_MSGSEND = YES; ENABLE_TESTABILITY = YES; ENABLE_USER_SCRIPT_SANDBOXING = NO; MACOSX_DEPLOYMENT_TARGET = 13.0; MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE; ONLY_ACTIVE_ARCH = YES; SDKROOT = macosx; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)"; SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+		};
+			name = Debug;
+		};
+		PR = {isa = XCBuildConfiguration; buildSettings = { CLANG_ENABLE_MODULES = YES; DEAD_CODE_STRIPPING = YES; DEVELOPMENT_TEAM = ""; MACOSX_DEPLOYMENT_TARGET = 13.0; MTL_ENABLE_DEBUG_INFO = NO; SDKROOT = macosx; SWIFT_COMPILATION_MODE = wholemodule; };
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		PCFGL = {isa = XCConfigurationList; buildConfigurations = (PD, PR, ); defaultConfigurationName = Debug; };
+		CFLST = {isa = XCConfigurationList; buildConfigurations = (DT, RT, ); defaultConfigurationName = Debug; };
+/* End XCConfigurationList section */
+
+	};
+	rootObject = PR1 /* Project object */;
+}

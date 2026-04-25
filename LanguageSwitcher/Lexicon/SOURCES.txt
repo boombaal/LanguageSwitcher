@@ -1,0 +1,11 @@
+Bundled word lists (UTF-8, one word per line, merged with app-specific terms). Loader lowercases; Russian matching also normalizes ё→е in LanguageScorer.
+
+English (en.txt)
+- Base: “10,000 most common English words” list (e.g. first20hours/google-10000-english on GitHub) — public domain / widely used for education.
+- Plus: domain terms from the previous small list (e.g. macos, swift, build).
+
+Russian (ru.txt)
+- Base: ~100,000 most common Russian word forms (University of Leeds / Internet corpus) via the hingston/russian republished list on GitHub (UTF-8; frequency order, sorted uniquely when merged).
+- Plus: previous app-specific terms.
+
+To replace: edit en.txt / ru.txt in the project, rebuild, or use “Словари из бандла” in app settings after swapping files in the built .app (for quick tests).

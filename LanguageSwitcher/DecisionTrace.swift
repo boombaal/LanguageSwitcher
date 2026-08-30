@@ -77,7 +77,6 @@ enum LanguageScorer {
         // Длина minWord в скоринге (например 4) не должна глушить намерение для ok_:
         // иначе «how»+pending остаётся без deferred, pending залипает (ниже languageHint==nil).
         let lenOk = n.count >= max(2, minWord)
-        let lenOkForOkPrefix = n.count >= 2
         if t.reasonCode.hasPrefix("ok_") {
             let tag = String(t.reasonCode.dropFirst(3))
             let allowOkTag = n.count >= 2 || lenOk

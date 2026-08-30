@@ -128,6 +128,24 @@ final class LanguageContextModel: NSObject {
 
     // MARK: - Recording
 
+    /// One-slot снимок счётчиков перед последним `recordCompletedWord` — для отмены (двойной Ctrl).
+    private var undoSnapshot: (recent: [String], enT: Int, ruT: Int, big: [Int], last: String?)?
+
+    /// Отменить эффект последнего `recordCompletedWord` (ровно один раз).
+    func rollbackLastCompletedWord() {
+        lock.lock()
+        guard let s = undoSnapshot else { lock.unlock(); return }
+        recentTags = s.recent
+        enTotal = s.enT
+        ruTotal = s.ruT
+        bEnEn = s.big[0]; bEnRu = s.big[1]; bRuEn = s.big[2]; bRuRu = s.big[3]
+        lastCompletedTag = s.last
+        undoSnapshot = nil
+        lock.unlock()
+        // `save()` берёт тот же `lock` — вызывать только после `unlock()` (как в `recordCompletedWord`).
+        save()
+    }
+
     /// Call at word boundary when a language is known from trace.
     func recordCompletedWord(resolvedTag: String?) {
         guard let t0 = resolvedTag, !t0.isEmpty else { return }
@@ -135,6 +153,7 @@ final class LanguageContextModel: NSObject {
         guard tag == "en" || tag == "ru" else { return }
         let bin = tag
         lock.lock()
+        undoSnapshot = (recentTags, enTotal, ruTotal, [bEnEn, bEnRu, bRuEn, bRuRu], lastCompletedTag)
         if let p = lastCompletedTag, p == "en" || p == "ru" {
             if p == "en" {
                 if bin == "en" { bEnEn += 1 } else { bEnRu += 1 }

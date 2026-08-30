@@ -4,7 +4,12 @@ import ApplicationServices
 import CoreFoundation
 
 private let kKeycodeField: CGEventField = .keyboardEventKeycode
-private let kEventMask: CGEventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
+private let kEventMask: CGEventMask =
+    (1 << CGEventType.keyDown.rawValue)
+    | (1 << CGEventType.flagsChanged.rawValue)
+    | (1 << CGEventType.leftMouseDown.rawValue)
+    | (1 << CGEventType.rightMouseDown.rawValue)
+    | (1 << CGEventType.otherMouseDown.rawValue)
 private let kBackspace: UInt16 = 0x33
 private let kSpace: UInt16 = 0x31
 private let kReturn: UInt16 = 0x24
@@ -30,8 +35,14 @@ final class EventTapController: NSObject {
     private var didLogFirstKey = false
     private var pendingAmbiguous: [PendingAmbiguousWord] = []
     private let maxPendingAmbiguous = 32
-    /// Сколько полных границ слов прошло **после** того, как в `pending` попало ambi-слово (лог, опцион.)
+    /// Сколько полных границ слов прошло **после** того, как в `pending` попало ambi-слово.
     private var wordBoundariesAfterAmbiPending: Int = 0
+    /// Когда в пустую очередь `pendingAmbiguous` попал первый ambi-сегмент — для протухания по времени.
+    private var pendingSince: CFTimeInterval = 0
+    /// Очередь считаем протухшей, если после неё прошло столько границ слов…
+    private let maxWordBoundariesForPending = 8
+    /// …или столько секунд реального времени (пользователь ушёл дальше — backspace по очереди опасен).
+    private let maxPendingAge: CFTimeInterval = 8
     /// Слова между ambi-сегмент(ами) и **текущим** (разрешающим) словом, пока нет `languageHint` / до deferred.
     /// Иначе при «рун»+пробел+`hey`+проб+`how`+… срабатывал `stale_pending_dropped` — «рун» оставался, дальше путалась вставка («рунhey»).
     private var deferredInterstitialWords: [PendingAmbiguousWord] = []
@@ -43,6 +54,24 @@ final class EventTapController: NSObject {
     private var lastControlTapTime: CFTimeInterval = 0
     private var controlTapCount = 0
     private let controlDoubleTapWindow: CFTimeInterval = 0.45
+    /// Последняя применённая смена раскладки слова (авто-коррекция или ручной двойной Ctrl) — для отмены двойным Ctrl.
+    private struct LayoutFlip {
+        var originalText: String
+        var replacedText: String
+        var restoreSourceID: String
+        var trailingBoundary: String
+        var learnedWord: String?
+        var learnedLang: String?
+        /// Авто-коррекция также записала слово в `LanguageContextModel` — при откате его надо снять.
+        var contextRecorded: Bool
+        var at: CFTimeInterval
+        var epoch: Int
+    }
+    private var lastLayoutFlip: LayoutFlip?
+    private let flipUndoWindow: CFTimeInterval = 20
+    /// Растёт на каждой границе слова **с непустым буфером** — отмену смены раскладки разрешаем
+    /// только в той же «эпохе» (одинокий синтетический пробел после коррекции эпоху не двигает).
+    private var boundaryEpoch: Int = 0
     private var lastCapsLockState = false
     private var lastWordSnapshot: (strokes: [(UInt16, Bool)], capsLock: Bool)?
     /// macOS шлёт Control чаще через `flagsChanged`, а не `keyDown`.
@@ -61,6 +90,15 @@ final class EventTapController: NSObject {
             queue: .main
         ) { [weak self] _ in
             self?.lex = LexiconStore.shared
+        }
+        // Переход в другое приложение: текст под курсором сменился — незавершённое слово и
+        // отложенная очередь к нему больше не относятся (клик мышью ловится в `onEvent`).
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.resetTypingStateOnContextChange(reason: "смена активного приложения")
         }
     }
 
@@ -125,7 +163,91 @@ final class EventTapController: NSObject {
     private func clearPending() {
         pendingAmbiguous.removeAll()
         wordBoundariesAfterAmbiPending = 0
+        pendingSince = 0
         deferredInterstitialWords.removeAll(keepingCapacity: false)
+    }
+
+    /// Клик мышью или переход в другое приложение: текст под курсором сменился, применять к
+    /// `pendingAmbiguous` / `deferredInterstitialWords` backspace небезопасно — сбрасываем всё.
+    private func resetTypingStateOnContextChange(reason: String) {
+        guard !buffer.isEmpty || !pendingAmbiguous.isEmpty || !deferredInterstitialWords.isEmpty else { return }
+        buffer.clear()
+        clearPending()
+        lastKeyDownTime = 0
+        lastWordSnapshot = nil
+        lastLayoutFlip = nil
+        LaunchLog.append("EventTap: \(reason) — буфер и отложенная очередь сброшены")
+    }
+
+    /// Запомнить только что применённую смену раскладки слова, чтобы двойной Ctrl мог её откатить.
+    private func recordLayoutFlip(
+        original: String, replaced: String, restoreSourceID: String,
+        trailingBoundary: String, learnedWord: String? = nil, learnedLang: String? = nil,
+        contextRecorded: Bool = false
+    ) {
+        guard !replaced.isEmpty, !restoreSourceID.isEmpty else { return }
+        lastLayoutFlip = LayoutFlip(
+            originalText: original, replacedText: replaced, restoreSourceID: restoreSourceID,
+            trailingBoundary: trailingBoundary, learnedWord: learnedWord, learnedLang: learnedLang,
+            contextRecorded: contextRecorded,
+            at: CFAbsoluteTimeGetCurrent(), epoch: boundaryEpoch
+        )
+    }
+
+    /// Двойной Ctrl сразу после смены раскладки слова — откат: вернуть исходный текст и TIS, убрать
+    /// заученное слово из user-словаря, почистить кэши. Возвращает `true`, если откат выполнен.
+    @discardableResult
+    private func tryUndoLastLayoutFlip() -> Bool {
+        guard let f = lastLayoutFlip else { return false }
+        guard buffer.isEmpty else { return false }
+        guard f.epoch == boundaryEpoch else { lastLayoutFlip = nil; return false }
+        guard CFAbsoluteTimeGetCurrent() - f.at <= flipUndoWindow else { lastLayoutFlip = nil; return false }
+        guard !f.replacedText.isEmpty, !f.originalText.isEmpty else { lastLayoutFlip = nil; return false }
+
+        let delCount = f.replacedText.count + f.trailingBoundary.count
+        // Печатать надо в РАСКЛАДКЕ исходного текста. `selectSource(id:)` на части систем (реестр видит
+        // одну раскладку) молча не переключает TIS — тогда те же keycode'ы отрисовываются в текущей
+        // (RU) раскладке и «белиберда» снова превращается в «привет». Ведём по скрипту originalText
+        // и через те же resolve/selectUS/selectRussian, что и остальные ветки коррекции.
+        let restoreIsCyrillic = f.originalText.range(of: #"[а-яёА-ЯЁ]"#, options: .regularExpression) != nil
+        runSyntheticOnTapThread {
+            self.runWithTapSuspendedForSynthetic {
+                SyntheticKeyboard.backspaces(delCount)
+                Thread.sleep(forTimeInterval: 0.012)
+                let r = self.input.resolve()
+                let reg = EnabledKeyboardSourcesRegistry.shared
+                let haveRestore = !f.restoreSourceID.isEmpty
+                let typeSid: String
+                if restoreIsCyrillic {
+                    if self.input.selectSource(id: f.restoreSourceID) != 0 { _ = self.input.selectRussian() }
+                    typeSid = (haveRestore && reg.isRussianSourceID(f.restoreSourceID)) ? f.restoreSourceID : r.ruID
+                } else {
+                    if self.input.selectSource(id: f.restoreSourceID) != 0 { _ = self.input.selectUS() }
+                    typeSid = (haveRestore && !reg.isRussianSourceID(f.restoreSourceID)) ? f.restoreSourceID : r.usID
+                }
+                Thread.sleep(forTimeInterval: 0.012)
+                SyntheticKeyboard.type(f.originalText, layoutSourceID: typeSid)
+                switch f.trailingBoundary {
+                case " ": SyntheticKeyboard.postSpace()
+                case "\t": SyntheticKeyboard.postTab()
+                case "\n", "\r": SyntheticKeyboard.postReturn()
+                default: break
+                }
+            }
+        }
+        if let w = f.learnedWord, let l = f.learnedLang, !w.isEmpty {
+            LexiconStore.shared.removeUserWords(lang: l, words: [w])
+        }
+        if f.contextRecorded {
+            LanguageContextModel.shared.rollbackLastCompletedWord()
+        }
+        clearPending()
+        layoutUndoStack.removeAll(keepingCapacity: false)
+        lastWordSnapshot = nil
+        buffer.clear()
+        lastLayoutFlip = nil
+        LaunchLog.append("EventTap: двойной Ctrl — отмена смены раскладки «\(f.replacedText)» → «\(f.originalText)» (restore TIS \(f.restoreSourceID), unlearn \(f.learnedWord ?? "—"))")
+        return true
     }
 
     private func pushLayoutUndo(before previousId: String) {
@@ -144,6 +266,8 @@ final class EventTapController: NSObject {
         lastControlTapTime = t
         guard controlTapCount >= 2 else { return }
         controlTapCount = 0
+        // Двойной Ctrl сразу после смены раскладки слова — это «нет, верни как было».
+        if tryUndoLastLayoutFlip() { return }
         performDoubleCtrlScriptSwapAndLearn()
     }
 
@@ -196,6 +320,10 @@ final class EventTapController: NSObject {
             }
         }
         LexiconStore.shared.appendUserWords(lang: targetLang, words: [newText])
+        recordLayoutFlip(
+            original: curText, replaced: newText, restoreSourceID: curId,
+            trailingBoundary: "", learnedWord: newText, learnedLang: targetLang
+        )
         buffer.clear()
         LaunchLog.append("EventTap: двойной Ctrl — «\(curText)» → «\(newText)» (+user \(targetLang))")
     }
@@ -446,6 +574,11 @@ final class EventTapController: NSObject {
             ignoreTapLock.unlock()
         }
         work()
+        // `CGEvent.post` асинхронный: последние синтетические нажатия и повторно отправленный
+        // boundary ещё в очереди HID. Дать им долететь ДО повторного включения тапа и сброса
+        // флага — иначе они входят в `onEvent` как «настоящие» и запускают второй проход
+        // коррекции (класс глюков «Wareho»+«Warehouse»).
+        Thread.sleep(forTimeInterval: 0.03)
     }
 
     /// Synthetic replace must run before the next key event is delivered; `main.async` races and causes «Wareho»+«Warehouse».
@@ -467,6 +600,10 @@ final class EventTapController: NSObject {
             let skip = ignoreTapKeyDownForOurSynthetic
             ignoreTapLock.unlock()
             if skip { return Unmanaged.passUnretained(e) }
+        }
+        if type == .leftMouseDown || type == .rightMouseDown || type == .otherMouseDown {
+            resetTypingStateOnContextChange(reason: "клик мышью")
+            return Unmanaged.passUnretained(e)
         }
         if type == .tapDisabledByTimeout, let m = mach {
             CGEvent.tapEnable(tap: m, enable: true)
@@ -564,12 +701,18 @@ final class EventTapController: NSObject {
     }
 
     private func handleBoundary(cg: CGEvent, n: NSEvent?) -> Unmanaged<CGEvent>? {
+        if !buffer.isEmpty { boundaryEpoch &+= 1 }
         registry.syncCurrentInputSourceFromSystem()
         let caps = n?.modifierFlags.contains(.capsLock) ?? cg.nsModifierFlags.contains(.capsLock)
         let readings = buildReadings(capsLock: caps)
         let curId = registry.currentInputSourceID
         if !pendingAmbiguous.isEmpty {
             wordBoundariesAfterAmbiPending += 1
+            let aged = pendingSince > 0 && (CFAbsoluteTimeGetCurrent() - pendingSince) > maxPendingAge
+            if wordBoundariesAfterAmbiPending > maxWordBoundariesForPending || aged {
+                LaunchLog.append("EventTap: отложенная очередь протухла (границ после ambi=\(wordBoundariesAfterAmbiPending), по времени=\(aged)) — сброс без правок текста")
+                clearPending()
+            }
         }
         let wus = buffer.stringAsUS()
         let wru = buffer.stringAsRU()
@@ -594,6 +737,7 @@ final class EventTapController: NSObject {
         let srcs = registry.enabledSources
         let t: DecisionTrace
         if srcs.count >= 2,
+           deferredInterstitialWords.isEmpty,
            let ruEnt = srcs.first(where: { registry.isRussianSourceID($0.sourceID) }),
            let latEnt = srcs.first(where: { $0.sourceID != ruEnt.sourceID }),
            pendingAmbiguous.count == 1, let p0 = pendingAmbiguous.first,
@@ -614,6 +758,7 @@ final class EventTapController: NSObject {
         }
         if t.reasonCode == "ambi" || t.reasonCode == "ambi2" {
             if pendingAmbiguous.count < maxPendingAmbiguous {
+                if pendingAmbiguous.isEmpty { pendingSince = CFAbsoluteTimeGetCurrent() }
                 wordBoundariesAfterAmbiPending = 0
                 deferredInterstitialWords.removeAll(keepingCapacity: false)
                 pendingAmbiguous.append(PendingAmbiguousWord(
@@ -624,7 +769,10 @@ final class EventTapController: NSObject {
             DispatchQueue.main.async { self.traceHandler(t) }
             return Unmanaged.passUnretained(cg)
         }
-        if let rec = LanguageScorer.contextTagToRecord(t) {
+        // `hold_ru_ctx` — это «не уверены, оставляем как есть», а не подтверждённое ru-слово.
+        // Записывать его как ru нельзя: тогда `shouldHoldRuTisVsShortEnReading` продолжает
+        // срабатывать на следующих коротких словах — снежный ком неисправленных слов.
+        if t.reasonCode != "hold_ru_ctx", let rec = LanguageScorer.contextTagToRecord(t) {
             LanguageContextModel.shared.recordCompletedWord(resolvedTag: rec)
         }
         var pCopy = pendingAmbiguous
@@ -676,6 +824,9 @@ final class EventTapController: NSObject {
                 LaunchLog.append("EventTap: deferred targetSid — RU via resolve: \(targetSid) (тек. TIS/список без ru — иначе кирилл. печать с ABC даёт 0 букв)")
             }
             let boundaryVK = cg.vKey
+            let restoreSid = EnabledKeyboardSourcesRegistry.shared.liveCurrentInputSourceID()
+            let originalOnScreen = (prefixSeg.map { $0.displayed } + [curDisp])
+                .filter { !$0.isEmpty }.joined(separator: " ")
             let nPrefixSegm = pCopy.count + deferredInterstitialWords.count
             let dRetro = DecisionTrace(
                 asCurrentScript: t.asCurrentScript, asAlternateScript: t.asAlternateScript, tisWasRussian: tisRU,
@@ -746,6 +897,10 @@ final class EventTapController: NSObject {
                     DispatchQueue.main.async { self.traceHandler(dApplied) }
                 }
             }
+            recordLayoutFlip(
+                original: originalOnScreen, replaced: allText, restoreSourceID: restoreSid,
+                trailingBoundary: Self.boundaryString(for: boundaryVK), contextRecorded: true
+            )
             return nil
         }
         if !pCopy.isEmpty, languageHint == nil {
@@ -768,14 +923,18 @@ final class EventTapController: NSObject {
             let aScreen = Self.displayCurrentWord(readings: readings, currentId: curId)
             // `phrase_to_en`: в поле «рун рщц» — backspace по двум сегм.; иначе одно слово; после инкрем. TIS см. t.asCurrentScript.
             let deleteCount: Int
+            let originalOnScreen: String
             if t.reasonCode == "phrase_to_en", let p0 = pendingAmbiguous.first {
                 deleteCount = p0.displayed.count + 1 + wru.count
+                originalOnScreen = p0.displayed + " " + wru
                 clearPending()
             } else {
                 deleteCount = max(t.asCurrentScript.count, aScreen.count)
+                originalOnScreen = aScreen.isEmpty ? t.asCurrentScript : aScreen
             }
             let targetSid = t.switchToSourceID ?? Self.inferBinaryTargetId(from: t)
             let boundaryVK = cg.vKey
+            let restoreSid = EnabledKeyboardSourcesRegistry.shared.liveCurrentInputSourceID()
             let retypeNeeded = t.reasonCode == "phrase_to_en" || !Self.isSameLexicalForm(g, t.asCurrentScript)
             runSyntheticOnTapThread {
                 self.runWithTapSuspendedForSynthetic {
@@ -829,6 +988,12 @@ final class EventTapController: NSObject {
                     }
                     SyntheticKeyboard.postBoundaryCorresponding(toVirtualKey: boundaryVK)
                 }
+            }
+            if retypeNeeded {
+                recordLayoutFlip(
+                    original: originalOnScreen, replaced: g, restoreSourceID: restoreSid,
+                    trailingBoundary: Self.boundaryString(for: boundaryVK), contextRecorded: true
+                )
             }
             return nil
         }

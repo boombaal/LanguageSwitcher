@@ -276,6 +276,22 @@ final class LexiconStore {
         NotificationCenter.default.post(name: .lexiconStoreDidReload, object: nil)
     }
 
+    /// Убрать слова из user-файла и перезагрузить (откат заученной смены раскладки двойным Ctrl).
+    func removeUserWords(lang: String, words: Set<String>) {
+        let k = EnabledKeyboardSourcesRegistry.normalizeLangTag(lang)
+        guard !k.isEmpty else { return }
+        guard var cur = Self.loadSet(from: Self.userLexiconURL(for: k)), !cur.isEmpty else { return }
+        let before = cur.count
+        for w in words {
+            let t = Self.normalizeLexeme(w)
+            if !t.isEmpty { cur.remove(t) }
+        }
+        guard cur.count != before else { return }
+        try? Self.writeUserLexiconFile(lang: k, words: cur)
+        reloadFromBundleAndCache()
+        NotificationCenter.default.post(name: .lexiconStoreDidReload, object: nil)
+    }
+
     private static func normalizeLexeme(_ raw: String) -> String {
         let t = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return t.replacingOccurrences(of: "ё", with: "е")

@@ -184,8 +184,8 @@ final class EnabledKeyboardSourcesRegistry {
 
     private static func querySelectableKeyboardSourcesRaw() -> [TISInputSource] {
         let dict: [CFString: Any] = [
-            kTISPropertyInputSourceCategory: kTISCategoryKeyboardInputSource,
-            kPropIsSelect: kCFBooleanTrue,
+            kTISPropertyInputSourceCategory: kTISCategoryKeyboardInputSource!,
+            kPropIsSelect: kCFBooleanTrue!,
         ]
         guard let arr = TISCreateInputSourceList(dict as CFDictionary, false)?.takeRetainedValue() as? [TISInputSource] else {
             return []

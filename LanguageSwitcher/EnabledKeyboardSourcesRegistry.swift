@@ -178,9 +178,9 @@ final class EnabledKeyboardSourcesRegistry {
         return id(cur)
     }
 
-    /// Property keys as documented for `TISCreateInputSourceList` (Swift may not expose all `kTIS*` constants).
-    private static let kPropIsSelect = "TISInputSourceIsSelect" as CFString
-    private static let kPropAsciiCapable = "TISInputSourceASCIICapable" as CFString
+    /// Именно системные константы: со строкой-ключом, которого TIS не знает, `TISCreateInputSourceList` молча отдаёт `[]`.
+    private static let kPropIsSelect: CFString = kTISPropertyInputSourceIsSelectCapable
+    private static let kPropAsciiCapable: CFString = kTISPropertyInputSourceIsASCIICapable
 
     private static func querySelectableKeyboardSourcesRaw() -> [TISInputSource] {
         let dict: [CFString: Any] = [

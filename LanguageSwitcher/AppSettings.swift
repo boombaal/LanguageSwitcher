@@ -20,6 +20,7 @@ final class AppSettings: NSObject {
     private let kIncCool = "incrementalLayoutCooldownS"
     private let kIncMinConf = "incrementalMinConfidence"
     private let kIncDbg = "incrementalScoringDebug"
+    private let kLogWords = "logWordDecisions"
 
     var minWordLength: Int {
         get { min(10, max(1, d.integer(forKey: kMinWord) == 0 ? 2 : d.integer(forKey: kMinWord))) }
@@ -93,6 +94,13 @@ final class AppSettings: NSObject {
     var incrementalMinConfidence: Double {
         get { min(0.95, max(0.04, d.object(forKey: kIncMinConf) as? Double ?? 0.14)) }
         set { d.set(newValue, forKey: kIncMinConf) }
+    }
+
+    /// Писать в launch.log решение по каждому «спорному» слову (с самим словом). Выключить:
+    /// `defaults write com.languageswitcher.app logWordDecisions -bool NO`.
+    var logWordDecisions: Bool {
+        get { d.object(forKey: kLogWords) as? Bool ?? true }
+        set { d.set(newValue, forKey: kLogWords) }
     }
 
     var incrementalScoringDebug: Bool {

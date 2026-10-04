@@ -331,6 +331,9 @@ enum LanguageScorer {
         )
     }
 
+    /// С какой длины точное слово в другой раскладке перевешивает «похожее на слово» на экране.
+    static let exactOverrideMinLength = 4
+
     static func score(
         wordAsUS: String,
         wordAsRU: String,
@@ -360,6 +363,26 @@ enum LanguageScorer {
         }
         if tisIsRussian {
             if aRu && bEn {
+                // `score01` насыщается до 1 и на префиксе («tot» ← total, «ult» ← ultimate): по нему «еще»/«где»
+                // неотличимы от слов-двойников. Точное слово в текущей раскладке против всего лишь
+                // «правдоподобного» чтения в другой — не неоднозначность.
+                if lex.hasNormalizedWord("ru", a), !lex.hasNormalizedWord("en", b) {
+                    return .init(
+                        asCurrentScript: a, asAlternateScript: b, tisWasRussian: tisIsRussian,
+                        aInEn: aEn, aInRu: aRu, bInEn: bEn, bInRu: bRu, appliedReplacement: nil, didSwitchTIS: false,
+                        reasonCode: "ok_ru", reasonHuman: "«\(a)» — точное слово ru, «\(b)» в en только похоже на слово — остаёмся."
+                    )
+                }
+                // Зеркально: на экране лишь «похоже на ru» («еруку» ← морфология), а те же клавиши в en — точное
+                // слово («there»). От 4 букв совпадение настоящего ru-слова с en-словом практически исключено
+                // (в словарях 2 случая на 5000 слов; для 3 букв — 2%, там по-прежнему ждём следующего слова).
+                if b.count >= exactOverrideMinLength, lex.hasNormalizedWord("en", b), !lex.hasNormalizedWord("ru", a) {
+                    return .init(
+                        asCurrentScript: a, asAlternateScript: b, tisWasRussian: tisIsRussian,
+                        aInEn: aEn, aInRu: aRu, bInEn: bEn, bInRu: bRu, appliedReplacement: b, didSwitchTIS: true,
+                        reasonCode: "to_en", reasonHuman: "«\(b)» — точное слово en, «\(a)» в ru только похоже на слово — смена на U.S."
+                    )
+                }
                 let sru = WordPlausibility.disambiguationWord01(a, lang: "ru", lex: lex)
                 let sen = WordPlausibility.disambiguationWord01(b, lang: "en", lex: lex)
                 if sen - sru > WordPlausibility.binaryAmbiguityMargin {
@@ -401,6 +424,20 @@ enum LanguageScorer {
             }
         } else {
             if aEn && bRu {
+                if lex.hasNormalizedWord("en", a), !lex.hasNormalizedWord("ru", b) {
+                    return .init(
+                        asCurrentScript: a, asAlternateScript: b, tisWasRussian: tisIsRussian,
+                        aInEn: aEn, aInRu: aRu, bInEn: bEn, bInRu: bRu, appliedReplacement: nil, didSwitchTIS: false,
+                        reasonCode: "ok_en", reasonHuman: "«\(a)» — точное слово en, «\(b)» в ru только похоже на слово — остаёмся."
+                    )
+                }
+                if b.count >= exactOverrideMinLength, lex.hasNormalizedWord("ru", b), !lex.hasNormalizedWord("en", a) {
+                    return .init(
+                        asCurrentScript: a, asAlternateScript: b, tisWasRussian: tisIsRussian,
+                        aInEn: aEn, aInRu: aRu, bInEn: bEn, bInRu: bRu, appliedReplacement: b, didSwitchTIS: true,
+                        reasonCode: "to_ru", reasonHuman: "«\(b)» — точное слово ru, «\(a)» в en только похоже на слово — смена на Русскую."
+                    )
+                }
                 let sen = WordPlausibility.disambiguationWord01(a, lang: "en", lex: lex)
                 let sru = WordPlausibility.disambiguationWord01(b, lang: "ru", lex: lex)
                 if sru - sen > WordPlausibility.binaryAmbiguityMargin {

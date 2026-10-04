@@ -47,13 +47,8 @@ final class EventTapController: NSObject {
     /// Иначе при «рун»+пробел+`hey`+проб+`how`+… срабатывал `stale_pending_dropped` — «рун» оставался, дальше путалась вставка («рунhey»).
     private var deferredInterstitialWords: [PendingAmbiguousWord] = []
     private let maxDeferredInterstitialWords = 40
-    /// Подряд идущие слова «не в той раскладке»: чтение тех же клавиш в другой раскладке — точное слово
-    /// словаря, а на экране (как минимум у двух из них) — не слово текущего языка. Нужна для фраз из одних коротких слов («щк тще ещ иу» =
-    /// «or not to be», «yj z yt» = «но я не»): по отдельности они `short`/`hold_ru_ctx` и ничего не решают.
-    private var foreignRun: [PendingAmbiguousWord] = []
-    private var foreignRunLastAt: CFTimeInterval = 0
-    /// Меньше трёх слов подряд — слишком легко принять сокращение/опечатку за чужую раскладку.
-    private let foreignRunMinWords = 3
+    /// Серия коротких слов «не в той раскладке» — см. `ForeignRunDetector`.
+    private var foreignRun = ForeignRunDetector()
     private var ignoreTapKeyDownForOurSynthetic = false
     private let ignoreTapLock = NSLock()
     private var layoutUndoStack: [String] = []
@@ -172,7 +167,7 @@ final class EventTapController: NSObject {
         wordBoundariesAfterAmbiPending = 0
         pendingSince = 0
         deferredInterstitialWords.removeAll(keepingCapacity: false)
-        foreignRun.removeAll()
+        foreignRun.reset()
     }
 
     /// Клик мышью или переход в другое приложение: текст под курсором сменился, применять к
@@ -484,50 +479,12 @@ final class EventTapController: NSObject {
         return nil
     }
 
-    /// Reading of the same keystrokes in `preferLang`, for deferred replacement — never fall back to on-screen Cyrillic when we asked for English.
     private static func targetForPending(_ p: PendingAmbiguousWord, preferLang: String, lex: LexiconStore) -> String {
-        let reg = EnabledKeyboardSourcesRegistry.shared
-        let want = EnabledKeyboardSourcesRegistry.normalizeLangTag(preferLang)
-        let srcs = reg.enabledSources
-
-        for e in srcs where EnabledKeyboardSourcesRegistry.normalizeLangTag(e.primaryLang) == want {
-            if let r = p.readingsByID[e.sourceID], !r.isEmpty { return r }
-        }
-        if want == "en" {
-            for e in srcs where !reg.isRussianSourceID(e.sourceID) {
-                if let r = p.readingsByID[e.sourceID], !r.isEmpty { return r }
-            }
-        } else if want == "ru" {
-            for e in srcs where reg.isRussianSourceID(e.sourceID) {
-                if let r = p.readingsByID[e.sourceID], !r.isEmpty { return r }
-            }
-        }
-
-        // Чтения из реестра нет (раскладка не в `enabledSources`): выбираем по алфавиту, а не по `curLang` —
-        // иначе для ru уходило латинское чтение клавиш («еще» → «tot»), хотя на экране уже кириллица.
-        if want == "ru" || want == "en" {
-            for c in [p.displayed, p.alternateScript] where Self.isInScript(c, lang: want) { return c }
-        }
-
-        let curLang = reg.langTag(forSourceID: p.currentSourceID).map { EnabledKeyboardSourcesRegistry.normalizeLangTag($0) } ?? ""
-        if !p.alternateScript.isEmpty, !want.isEmpty, curLang != want {
-            return p.alternateScript
-        }
-        if !p.alternateScript.isEmpty, isWordPlausibleForLang(p.alternateScript, lang: want, lex: lex) {
-            return p.alternateScript
-        }
-        if !p.displayed.isEmpty, isWordPlausibleForLang(p.displayed, lang: want, lex: lex) {
-            return p.displayed
-        }
-        if !p.alternateScript.isEmpty { return p.alternateScript }
-        return p.displayed
-    }
-
-    /// Слово написано алфавитом `lang` (ru — есть кириллица и нет латиницы, en — наоборот).
-    private static func isInScript(_ s: String, lang: String) -> Bool {
-        let cyr = s.range(of: #"[а-яёА-ЯЁ]"#, options: .regularExpression) != nil
-        let lat = s.range(of: #"[A-Za-z]"#, options: .regularExpression) != nil
-        return lang == "ru" ? (cyr && !lat) : (lat && !cyr)
+        DeferredTarget.text(
+            displayed: p.displayed, alternate: p.alternateScript, readingsByID: p.readingsByID,
+            currentSourceID: p.currentSourceID, preferLang: preferLang,
+            sources: EnabledKeyboardSourcesRegistry.shared.enabledSources, lex: lex
+        )
     }
 
     private static func displayCurrentWord(readings: [String: String], currentId: String) -> String {
@@ -659,7 +616,7 @@ final class EventTapController: NSObject {
         let noTextMods: NSEvent.ModifierFlags = [.command, .control, .option, .function]
         if !n.modifierFlags.isDisjoint(with: noTextMods) { buffer.clear(); clearPending(); lastKeyDownTime = 0; return Unmanaged.passUnretained(cg) }
         if kc == kBackspace {
-            if buffer.isEmpty { foreignRun.removeAll() }
+            if buffer.isEmpty { foreignRun.reset() }
             buffer.popLast()
             lastKeyDownTime = CFAbsoluteTimeGetCurrent()
             if !buffer.isEmpty {
@@ -688,7 +645,7 @@ final class EventTapController: NSObject {
         let noTextMods: NSEvent.ModifierFlags = [.command, .control, .option, .function]
         if !f.isDisjoint(with: noTextMods) { buffer.clear(); clearPending(); lastKeyDownTime = 0; return Unmanaged.passUnretained(cg) }
         if kc == kBackspace {
-            if buffer.isEmpty { foreignRun.removeAll() }
+            if buffer.isEmpty { foreignRun.reset() }
             buffer.popLast()
             lastKeyDownTime = CFAbsoluteTimeGetCurrent()
             if !buffer.isEmpty {
@@ -711,54 +668,44 @@ final class EventTapController: NSObject {
         return Unmanaged.passUnretained(cg)
     }
 
+    /// Строка в launch.log на каждое «спорное» слово — без неё причину решения приходится восстанавливать по коду.
+    /// Уверенные `ok_*` не пишем: это обычный набор, в логе ему делать нечего.
+    private func logWordDecision(_ t: DecisionTrace) {
+        guard AppSettings.shared.logWordDecisions, !t.reasonCode.hasPrefix("ok_"), t.reasonCode != "empty" else { return }
+        let queued = pendingAmbiguous.count + deferredInterstitialWords.count
+        if t.reasonCode == "short", queued == 0, foreignRun.isEmpty { return }
+        LaunchLog.append("EventTap: word «\(t.asCurrentScript)»/«\(t.asAlternateScript)» → \(t.reasonCode) (queue=\(queued) run=\(foreignRun.words.count))")
+    }
+
     /// Учесть слово на границе в `foreignRun`. Возвращает серию, когда её пора переписать в другую раскладку.
     private func noteForeignRunWord(
         t: DecisionTrace, readings: [String: String], curId: String, srcs: [KeyboardSourceEntry], boundaryIsSpace: Bool
-    ) -> (words: [PendingAmbiguousWord], targetSid: String, lang: String)? {
+    ) -> (words: [ForeignRunWord], targetSid: String, lang: String)? {
         guard srcs.count == 2,
               let ruEnt = srcs.first(where: { registry.isRussianSourceID($0.sourceID) }),
               let latEnt = srcs.first(where: { $0.sourceID != ruEnt.sourceID }),
-              curId == ruEnt.sourceID || curId == latEnt.sourceID,
-              t.appliedReplacement == nil, !t.reasonCode.hasPrefix("ok_")
-        else { foreignRun.removeAll(); return nil }
+              curId == ruEnt.sourceID || curId == latEnt.sourceID
+        else { foreignRun.reset(); return nil }
         let curIsRU = curId == ruEnt.sourceID
-        let curLang = curIsRU ? "ru" : "en"
         let otherLang = curIsRU ? "en" : "ru"
         let otherSid = curIsRU ? latEnt.sourceID : ruEnt.sourceID
         let screen = readings[curId] ?? ""
-        let other = readings[otherSid] ?? ""
-        // Только точные попадания в словарь: `score01` для 2–3 букв почти всегда «правдоподобен» как префикс.
-        // Слово, которое есть и в словаре текущего языка, серию не рвёт (в ru.txt есть мусор вроде «ещ»),
-        // но и доказательством не считается — см. `strict` ниже.
-        guard !screen.isEmpty, Self.isInScript(other, lang: otherLang), lex.hasNormalizedWord(otherLang, other)
-        else { foreignRun.removeAll(); return nil }
-        let now = CFAbsoluteTimeGetCurrent()
-        if let last = foreignRun.last, last.currentSourceID != curId || now - foreignRunLastAt > maxPendingAge {
-            foreignRun.removeAll()
-        }
-        foreignRun.append(PendingAmbiguousWord(
-            readingsByID: readings, currentSourceID: curId, displayed: screen, alternateScript: other,
-            keyStrokes: lastWordSnapshot.map(\.strokes) ?? []
-        ))
-        foreignRunLastAt = now
-        let run = foreignRun
-        // `backspaceN` считает между словами ровно один пробел; после Return/Tab серию не продолжаем.
-        if !boundaryIsSpace { foreignRun.removeAll() }
-        // Хотя бы одно слово из 2+ букв: «b c d» → «и с в» — три «слова», но это перечисление, а не фраза.
-        // И минимум два слова, которых на экране в словаре текущего языка нет вовсе.
-        let strict = run.filter { !lex.hasNormalizedWord(curLang, $0.displayed) }.count
-        guard run.count >= foreignRunMinWords, strict >= 2,
-              run.contains(where: { Self.deferredKeyCount($0) >= 2 }) else { return nil }
+        guard let run = foreignRun.note(
+            screen: screen, other: readings[otherSid] ?? "", curLang: curIsRU ? "ru" : "en", otherLang: otherLang,
+            sourceID: curId, keyCount: lastWordSnapshot.map { $0.strokes.count } ?? screen.count,
+            decided: t.appliedReplacement != nil || t.reasonCode.hasPrefix("ok_"),
+            boundaryIsSpace: boundaryIsSpace, now: CFAbsoluteTimeGetCurrent(), lex: lex
+        ) else { return nil }
         return (run, otherSid, otherLang)
     }
 
     /// Стереть серию `foreignRun` и напечатать те же клавиши в раскладке `targetSid` (она остаётся выбранной).
     private func applyForeignRun(
-        _ run: [PendingAmbiguousWord], targetSid: String, lang: String, cg: CGEvent, t: DecisionTrace
+        _ run: [ForeignRunWord], targetSid: String, lang: String, cg: CGEvent, t: DecisionTrace
     ) -> Unmanaged<CGEvent>? {
-        let allText = run.map(\.alternateScript).joined(separator: " ")
-        let original = run.map(\.displayed).joined(separator: " ")
-        let backspaceN = run.reduce(0) { $0 + Self.deferredKeyCount($1) } + run.count - 1
+        let allText = run.map(\.other).joined(separator: " ")
+        let original = run.map(\.screen).joined(separator: " ")
+        let backspaceN = run.reduce(0) { $0 + $1.keyCount } + run.count - 1
         let boundaryVK = cg.vKey
         let restoreSid = registry.liveCurrentInputSourceID()
         clearPending()
@@ -816,7 +763,7 @@ final class EventTapController: NSObject {
             let aged = pendingSince > 0 && (CFAbsoluteTimeGetCurrent() - pendingSince) > maxPendingAge
             if wordBoundariesAfterAmbiPending > maxWordBoundariesForPending || aged {
                 LaunchLog.append("EventTap: отложенная очередь протухла (границ после ambi=\(wordBoundariesAfterAmbiPending), по времени=\(aged)) — сброс без правок текста")
-                // У серии `foreignRun` свой срок годности (`foreignRunLastAt`), протухание ambi-очереди её не касается.
+                // У серии `foreignRun` свой срок годности (`ForeignRunDetector.maxGap`), протухание ambi-очереди её не касается.
                 let keepRun = foreignRun
                 clearPending()
                 foreignRun = keepRun
@@ -864,6 +811,7 @@ final class EventTapController: NSObject {
         } else {
             t = LanguageScorer.score(wordAsUS: wus, wordAsRU: wru, tisIsRussian: tisRU, lex: lex, minLength: minL)
         }
+        logWordDecision(t)
         if let fire = noteForeignRunWord(t: t, readings: readings, curId: curId, srcs: srcs, boundaryIsSpace: cg.vKey == kSpace) {
             return applyForeignRun(fire.words, targetSid: fire.targetSid, lang: fire.lang, cg: cg, t: t)
         }

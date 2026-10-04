@@ -38,6 +38,9 @@ final class LexiconStore {
 
     init() { reloadFromBundleAndCache() }
 
+    /// Готовые множества без диска и бандла (тесты, офлайн-проверки).
+    init(words: [String: Set<String>]) { install(words) }
+
     /// `~/Library/Application Support/LanguageSwitcher/Lexicon/user-<lang>.txt` — редактируемые слова (не затираются манифестом).
     static func userLexiconURL(for lang: String) -> URL {
         let k = EnabledKeyboardSourcesRegistry.normalizeLangTag(lang)
@@ -46,9 +49,9 @@ final class LexiconStore {
 
     func reloadFromBundleAndCache() {
         var next: [String: Set<String>] = [:]
-        next["en"] = Self.mergedLang(cached: LexiconDownloadService.cacheFileURL(for: "en"), bundled: Self.bundleURL(lang: "en"), fallback: Self.fallbackEN)
+        next["en"] = Self.mergedLang(lang: "en", cached: LexiconDownloadService.cacheFileURL(for: "en"), bundled: Self.bundleURL(lang: "en"), fallback: Self.fallbackEN)
             .union(Self.loadSet(from: Self.userLexiconURL(for: "en")) ?? [])
-        next["ru"] = Self.mergedLang(cached: LexiconDownloadService.cacheFileURL(for: "ru"), bundled: Self.bundleURL(lang: "ru"), fallback: Self.fallbackRU)
+        next["ru"] = Self.mergedLang(lang: "ru", cached: LexiconDownloadService.cacheFileURL(for: "ru"), bundled: Self.bundleURL(lang: "ru"), fallback: Self.fallbackRU)
             .union(Self.loadSet(from: Self.userLexiconURL(for: "ru")) ?? [])
         for lang in LexiconDownloadService.cachedLangFiles() where lang != "en" && lang != "ru" {
             let k = EnabledKeyboardSourcesRegistry.normalizeLangTag(lang)
@@ -66,6 +69,10 @@ final class LexiconStore {
                 next[k] = user
             }
         }
+        install(next)
+    }
+
+    private func install(_ next: [String: Set<String>]) {
         let sorted = next.mapValues { Array($0).sorted() }
         var tries: [String: LexiconPrefixTrie] = [:]
         for (k, words) in sorted {
@@ -304,14 +311,47 @@ final class LexiconStore {
         try text.write(to: u, atomically: true, encoding: .utf8)
     }
 
-    private static func mergedLang(cached: URL?, bundled: URL?, fallback: [String]) -> Set<String> {
+    private static func mergedLang(lang: String, cached: URL?, bundled: URL?, fallback: [String]) -> Set<String> {
         let c = loadSet(from: cached)
         let b = loadSet(from: bundled)
         switch (c, b) {
-        case let (x?, y?): return x.union(y)
-        case let (x?, nil): return x
-        case let (nil, y?): return y
+        case let (x?, y?): return sanitized(x.union(y), lang: lang)
+        case let (x?, nil): return sanitized(x, lang: lang)
+        case let (nil, y?): return sanitized(y, lang: lang)
         case (nil, nil): return Set(fallback)
+        }
+    }
+
+    /// Настоящие одно- и двухбуквенные слова. Частотные списки содержат почти все пары букв («ещ», «шт», «ir», «ti»),
+    /// и тогда любое короткое чтение «есть в словаре» — отличить раскладку по коротким словам невозможно.
+    static let shortWordWhitelist: [String: Set<String>] = [
+        "en": [
+            "a", "i",
+            "ad", "ah", "ai", "am", "an", "as", "at", "be", "by", "do", "eu", "go", "ha", "he", "hi", "id", "if", "in", "is", "it",
+            "me", "my", "no", "of", "oh", "ok", "on", "or", "os", "pc", "pm", "so", "to", "tv", "ui", "uk", "up", "us", "vs", "we",
+        ],
+        "ru": [
+            "а", "в", "и", "к", "о", "с", "у", "я",
+            "ад", "аж", "ай", "ас", "ах", "бы", "во", "вы", "га", "да", "до", "ее", "еж", "ем", "ею", "же", "за", "из", "ил", "им",
+            "их", "ко", "ли", "мы", "на", "не", "ни", "но", "ну", "об", "ой", "ом", "он", "от", "ох", "по", "со", "та", "те", "то",
+            "ту", "ты", "уж", "ум", "ус", "ух", "фу", "ща", "щи", "эй", "эх", "юг", "яд", "як", "ям",
+        ],
+    ]
+
+    /// Чистка списков из бандла/кэша (user-словарь не трогаем — туда слова кладёт сам пользователь):
+    /// только буквы своего алфавита (плюс дефис/апостроф), а слова в 1–2 буквы — только из `shortWordWhitelist`.
+    static func sanitized(_ words: Set<String>, lang: String) -> Set<String> {
+        let k = EnabledKeyboardSourcesRegistry.normalizeLangTag(lang)
+        guard k == "en" || k == "ru" else { return words }
+        let allowedShort = shortWordWhitelist[k] ?? []
+        func isOwnLetter(_ u: Unicode.Scalar) -> Bool {
+            k == "en" ? ("a"..."z").contains(u) : (("а"..."я").contains(u) || u == "ё")
+        }
+        return words.filter { w in
+            guard let first = w.unicodeScalars.first, isOwnLetter(first),
+                  w.unicodeScalars.allSatisfy({ isOwnLetter($0) || $0 == "-" || (k == "en" && $0 == "'") }) else { return false }
+            if w.count <= 2 { return allowedShort.contains(normalizeKey(k, w)) }
+            return true
         }
     }
 

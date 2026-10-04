@@ -90,6 +90,7 @@ enum LaunchLog {
     }
 
     static func append(_ message: String) {
+        guard !isRunningTests else { return }
         let line = "\(ISO8601DateFormatter().string(from: Date())) \(message)"
         for url in [homeFileURL(), appSupportFileURL()] {
             appendLine(line, to: url)
@@ -106,18 +107,27 @@ enum LaunchLog {
         #endif
     }
 
+    /// Под XCTest в пользовательский лог не пишем.
+    private static let isRunningTests: Bool =
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil || NSClassFromString("XCTestCase") != nil
+
+    /// Больше — файл уезжает в `<имя>.1` (одна предыдущая копия).
+    private static let maxFileBytes: UInt64 = 2_000_000
+
+    /// Дописывание в конец (`O_APPEND`). Раньше файл целиком читался и перезаписывался на каждую строку —
+    /// на потоке event tap это мегабайты ввода-вывода на одно слово.
     private static func appendLine(_ line: String, to file: URL) {
+        guard !isRunningTests else { return }
+        let fm = FileManager.default
         let dir = file.deletingLastPathComponent()
-        if !FileManager.default.fileExists(atPath: dir.path) {
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        if !fm.fileExists(atPath: dir.path) {
+            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         }
-        var text = (try? String(contentsOf: file, encoding: .utf8)) ?? ""
-        if !text.isEmpty, !text.hasSuffix("\n") { text += "\n" }
-        text += line + "\n"
-        do {
-            try text.write(to: file, atomically: true, encoding: .utf8)
-        } catch {
-            unilog.error("write failed: \(file.path, privacy: .public) err=\(error.localizedDescription, privacy: .public)")
+        if let size = (try? fm.attributesOfItem(atPath: file.path))?[.size] as? UInt64, size > maxFileBytes {
+            let old = file.appendingPathExtension("1")
+            try? fm.removeItem(at: old)
+            try? fm.moveItem(at: file, to: old)
         }
+        if let d = (line + "\n").data(using: .utf8) { appendDataFile(d, path: file.path) }
     }
 }

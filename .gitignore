@@ -25,3 +25,6 @@ Profile/
 *.log
 LanguageSwitcher-launch.log
 
+
+# SwiftPM
+.build/

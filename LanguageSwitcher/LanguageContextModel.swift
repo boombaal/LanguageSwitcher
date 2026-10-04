@@ -146,6 +146,19 @@ final class LanguageContextModel: NSObject {
         save()
     }
 
+    /// Забыть накопленный контекст (последние слова, счётчики en/ru, биграммы).
+    func reset() {
+        lock.lock()
+        recentTags = []
+        enTotal = 0; ruTotal = 0
+        bEnEn = 0; bEnRu = 0; bRuEn = 0; bRuRu = 0
+        lastCompletedTag = nil
+        undoSnapshot = nil
+        pausePlausibilityPending = false
+        lock.unlock()
+        save()
+    }
+
     /// Call at word boundary when a language is known from trace.
     func recordCompletedWord(resolvedTag: String?) {
         guard let t0 = resolvedTag, !t0.isEmpty else { return }

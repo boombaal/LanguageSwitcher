@@ -41,9 +41,17 @@ open "build/DerivedData/Build/Products/Debug/LanguageSwitcher.app"
 **Bundle ID:** `com.languageswitcher.app`  
 `LSUIElement` in `Info.plist` controls whether the app appears in the Dock (handy to toggle while debugging).
 
+## Tests
+
+```bash
+swift test
+```
+
+`Package.swift` exists only for this: it compiles the same sources (minus `AppMain.swift`) as a library, so the scoring logic runs without launching the app or needing Input Monitoring. Suites live in `Tests/LanguageSwitcherCoreTests` and use the real bundled word lists.
+
 ## Dictionaries
 
-Bundled `en` / `ru` word lists; optional downloads via manifest under Application Support. User-editable `user-<lang>.txt` files are merged in and not overwritten by manifest updates.
+Bundled `en` / `ru` word lists (cleaned on load: non-letter entries are dropped and 1–2 letter entries are kept only if whitelisted in `LexiconStore.shortWordWhitelist`); optional downloads via manifest under Application Support. User-editable `user-<lang>.txt` files are merged in and not overwritten by manifest updates.
 
 ## Permissions
 

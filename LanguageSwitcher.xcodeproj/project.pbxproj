@@ -21,6 +21,7 @@
 		BF0C /* StatusBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR0C; };
 		BF0D /* SyntheticKeyboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR0D; };
 		BF0E /* WordBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR0E; };
+		BF2A /* DeferredRewritePlanning.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2A; };
 		BF0F /* LaunchDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR0F; };
 		BF12 /* LaunchLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR12; };
 		BF15 /* AppMain.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR15; };
@@ -58,6 +59,7 @@
 		FR0C /* StatusBarController.swift */ = {isa = PBXFileReference; lastKnownType = sourcecode.swift; path = StatusBarController.swift; sourceTree = "<group>"; };
 		FR0D /* SyntheticKeyboard.swift */ = {isa = PBXFileReference; lastKnownType = sourcecode.swift; path = SyntheticKeyboard.swift; sourceTree = "<group>"; };
 		FR0E /* WordBuffer.swift */ = {isa = PBXFileReference; lastKnownType = sourcecode.swift; path = WordBuffer.swift; sourceTree = "<group>"; };
+		FR2A /* DeferredRewritePlanning.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeferredRewritePlanning.swift; sourceTree = "<group>"; };
 		FR0F /* LaunchDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchDiagnostics.swift; sourceTree = "<group>"; };
 		FR12 /* LaunchLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchLog.swift; sourceTree = "<group>"; };
 		FR16 /* EnabledKeyboardSourcesRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnabledKeyboardSourcesRegistry.swift; sourceTree = "<group>"; };
@@ -83,7 +85,7 @@
 /* Begin PBXGroup section */
 		ROOT = {isa = PBXGroup; children = (GSRC, FPROD, FR00, ); sourceTree = "<group>"; };
 		GLEX = {isa = PBXGroup; children = (FR10, FR11,); path = Lexicon; sourceTree = "<group>"; };
-		GSRC = {isa = PBXGroup; children = (GLEX, FR14, FR15, FR01, FR02, FR03, FR04, FR05, FR06, FR07, FR08, FR09, FR0A, FR0B, FR0C, FR0D, FR0E, FR0F, FR12, FR16, FR17, FR18, FR19, FR1A, FR1B, FR1C, FR1D, FR1E, FR1F, FR20, ); path = LanguageSwitcher; sourceTree = "<group>"; };
+		GSRC = {isa = PBXGroup; children = (GLEX, FR14, FR15, FR01, FR02, FR03, FR04, FR05, FR06, FR07, FR08, FR09, FR0A, FR0B, FR0C, FR0D, FR0E, FR2A, FR0F, FR12, FR16, FR17, FR18, FR19, FR1A, FR1B, FR1C, FR1D, FR1E, FR1F, FR20, ); path = LanguageSwitcher; sourceTree = "<group>"; };
 		FPROD = {isa = PBXGroup; children = (APP, ); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
@@ -117,7 +119,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		PHS = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (BF14, BF15, BF01, BF02, BF03, BF04, BF05, BF06, BF07, BF08, BF09, BF0A, BF0B, BF0C, BF0D, BF0E, BF0F, BF12, BF16, BF17, BF18, BF19, BF1A, BF1B, BF1C, BF1D, BF1E, BF1F, BF20, ); runOnlyForDeploymentPostprocessing = 0; };
+		PHS = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (BF14, BF15, BF01, BF02, BF03, BF04, BF05, BF06, BF07, BF08, BF09, BF0A, BF0B, BF0C, BF0D, BF0E, BF2A, BF0F, BF12, BF16, BF17, BF18, BF19, BF1A, BF1B, BF1C, BF1D, BF1E, BF1F, BF20, ); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
